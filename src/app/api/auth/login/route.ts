@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { signAccessToken, signRefreshToken } from "@/lib/jwt";
 
+// /api/auth/login
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const { phone } = body;

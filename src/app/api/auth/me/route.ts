@@ -1,6 +1,7 @@
 import { withAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
+// /api/auth/me
 export const GET = withAuth(async (request, authUser) => {
   const user = await prisma.user.findUnique({ where: { id: authUser.userId } });
 
