@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
   const { phone, code, name, role } = body;
 
   if (!phone || !code) {
-    return Response.json({ error: "phone and code are required" }, { status: 400 });
+    return Response.json({ error: "Phone and code are required" }, { status: 400 });
   }
 
   if (!PHONE_REGEX.test(phone)) {
@@ -33,14 +33,12 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "OTP code has expired" }, { status: 401 });
   }
 
-  await prisma.otpCode.delete({ where: { id: otpRecord.id } });
-
   let user = await prisma.user.findUnique({ where: { phone }, include: { driver: true } });
 
   if (!user) {
     if (!name || !role) {
       return Response.json(
-        { error: "name and role are required for new users", isNewUser: true },
+        { error: "Name and role are required for new users", isNewUser: true },
         { status: 422 },
       );
     }
@@ -59,6 +57,8 @@ export async function POST(request: NextRequest) {
       include: { driver: true },
     });
   }
+
+  await prisma.otpCode.delete({ where: { id: otpRecord.id } });
 
   const payload = { userId: user.id, phone: user.phone, role: user.role };
   const accessToken = signAccessToken(payload);

@@ -30,10 +30,11 @@ export async function POST(request: NextRequest) {
 
   await prisma.otpCode.create({ data: { phone, code, expiresAt } });
 
-  console.log(`[OTP] Code for ${phone}: ${code}`);
+  console.log(`OTP Code for ${phone}: ${code}`);
 
   return Response.json({
     message: "OTP sent",
-    ...(process.env.NODE_ENV !== "production" && { code }),
+    code,
+    // ...(process.env.NODE_ENV !== "production" && { code }),
   });
 }
