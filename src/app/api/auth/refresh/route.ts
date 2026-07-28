@@ -1,26 +1,14 @@
 import { NextRequest } from "next/server";
-import { JwtPayload, signAccessToken, verifyRefreshToken } from "@/lib/jwt";
+import { refreshSchema } from "@/schemas/auth.schema";
+import { refreshAccessToken } from "@/services/auth.service";
+import { handleApiError } from "@/lib/errors";
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { refreshToken } = body;
-
-  if (!refreshToken) {
-    return Response.json({ error: "Refresh token is required" }, { status: 400 });
-  }
-
-  let payload: JwtPayload;
   try {
-    payload = verifyRefreshToken(refreshToken);
-  } catch {
-    return Response.json({ error: "Invalid or expired refresh token" }, { status: 401 });
+    const { refreshToken } = refreshSchema.parse(await request.json());
+
+    return Response.json(refreshAccessToken(refreshToken));
+  } catch (error) {
+    return handleApiError(error);
   }
-
-  const accessToken = signAccessToken({
-    userId: payload.userId,
-    phone: payload.phone,
-    role: payload.role,
-  });
-
-  return Response.json({ accessToken });
 }
