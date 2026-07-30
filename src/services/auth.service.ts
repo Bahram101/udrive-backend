@@ -84,7 +84,8 @@ export function refreshAccessToken(refreshToken: string): { accessToken: string 
     throw new AppError(401, "Invalid or expired refresh token");
   }
 
-  return { accessToken: signAccessToken(payload) };
+  const { userId, phone, role } = payload;
+  return { accessToken: signAccessToken({ userId, phone, role }) };
 }
 
 function issueTokens(user: {
