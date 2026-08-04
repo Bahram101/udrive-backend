@@ -44,12 +44,12 @@ model Order {
   driverId    String?
   fromAddress String
   toAddress   String
-  status      OrderStatus
-  fromLat     Float
-  fromLng     Float
+  status      OrderStatus @default(NEW)
+  fromLat     Float?
+  fromLng     Float?
   price       Decimal?
-  toLat       Float
-  toLng       Float
+  toLat       Float?
+  toLng       Float?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
