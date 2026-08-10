@@ -30,6 +30,8 @@ model Driver {
   carNumber String?
   isOnline  Boolean @default(false)
   rating    Float   @default(5.0)
+  lat       Float?
+  lng       Float?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -43,11 +45,11 @@ model Order {
   clientId    String
   driverId    String?
   fromAddress String
-  toAddress   String
+  toAddress   String?
   status      OrderStatus @default(NEW)
-  fromLat     Float?
-  fromLng     Float?
-  price       Decimal?
+  fromLat     Float
+  fromLng     Float
+  price       Int?
   toLat       Float?
   toLng       Float?
 

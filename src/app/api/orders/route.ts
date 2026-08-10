@@ -7,14 +7,14 @@ import { handleApiError } from "@/lib/errors";
 // POST /api/orders
 export const POST = withAuth(async (request: NextRequest, authUser) => {
   try {
-    const { fromAddress, toAddress } = createOrderSchema.parse(
-      await request.json(),
-    );
+    const { fromAddress, fromLat, fromLng } = createOrderSchema.parse(await request.json());
 
     const order = await createOrder({
       clientId: authUser.userId,
       fromAddress,
-      toAddress,
+      fromLat,
+      fromLng,
+      price: 400,
     });
 
     return Response.json({ order }, { status: 201 });
