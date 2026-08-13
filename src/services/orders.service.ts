@@ -8,6 +8,7 @@ interface CreateOrderInput {
   fromAddress: string;
   fromLat: number;
   fromLng: number;
+  toAddress?: string;
   price: number;
 }
 
@@ -37,37 +38,41 @@ async function findNearestOnlineDriverId(point: {
   return nearestId;
 }
 
-export async function createOrder({
-  clientId,
-  fromAddress,
-  fromLat,
-  fromLng,
-  price,
-}: CreateOrderInput): Promise<Order> {
-  const client = await prisma.user.findUnique({ where: { id: clientId } });
+export const OrdersService = {
+  async createOrder({
+    clientId,
+    fromAddress,
+    fromLat,
+    fromLng,
+    toAddress,
+    price,
+  }: CreateOrderInput): Promise<Order> {
+    const client = await prisma.user.findUnique({ where: { id: clientId } });
 
-  if (!client) {
-    throw new AppError(404, "User not found");
-  }
+    if (!client) {
+      throw new AppError(404, "User not found");
+    }
 
-  if (client.role !== "CLIENT") {
-    throw new AppError(403, "Only clients can create orders");
-  }
+    if (client.role !== "CLIENT") {
+      throw new AppError(403, "Only clients can create orders");
+    }
 
-  console.log("fromLat", fromLat);
-  console.log("fromLng", fromLng);
+    const driverId = await findNearestOnlineDriverId({
+      lat: fromLat,
+      lng: fromLng,
+    });
 
-  const driverId = await findNearestOnlineDriverId({ lat: fromLat, lng: fromLng });
-
-  return prisma.order.create({
-    data: {
-      clientId,
-      fromAddress,
-      fromLat,
-      fromLng,
-      price,
-      driverId,
-      status: driverId ? "ACCEPTED" : "NEW",
-    },
-  });
-}
+    return prisma.order.create({
+      data: {
+        clientId,
+        fromAddress,
+        fromLat,
+        fromLng,
+        toAddress,
+        price,
+        driverId,
+        status: driverId ? "ACCEPTED" : "NEW",
+      },
+    });
+  },
+};

@@ -1,19 +1,23 @@
 import { NextRequest } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { createOrderSchema } from "@/schemas/orders.schema";
-import { createOrder } from "@/services/orders.service";
+import { OrdersService } from "@/services/orders.service";
 import { handleApiError } from "@/lib/errors";
 
 // POST /api/orders
 export const POST = withAuth(async (request: NextRequest, authUser) => {
   try {
-    const { fromAddress, fromLat, fromLng } = createOrderSchema.parse(await request.json());
+    const { fromAddress, fromLat, fromLng, toAddress } = createOrderSchema.parse(
+      await request.json(),
+    );
+    console.log(fromAddress, fromLat, fromLng, toAddress);
 
-    const order = await createOrder({
+    const order = await OrdersService.createOrder({
       clientId: authUser.userId,
       fromAddress,
       fromLat,
       fromLng,
+      toAddress,
       price: 400,
     });
 

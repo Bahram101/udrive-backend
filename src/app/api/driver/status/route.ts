@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { updateDriverStatusSchema } from "@/schemas/driver.schema";
-import { updateDriverStatus } from "@/services/driver.service";
+import { DriverService } from "@/services/driver.service";
 import { handleApiError } from "@/lib/errors";
 
 // PATCH /api/driver/status
@@ -11,7 +11,7 @@ export const PATCH = withAuth(async (request: NextRequest, authUser) => {
       await request.json(),
     );
 
-    const driver = await updateDriverStatus({
+    const driver = await DriverService.updateDriverStatus({
       userId: authUser.userId,
       isOnline,
       lat,
