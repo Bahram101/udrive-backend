@@ -10,7 +10,7 @@ export const POST = withAuth(async (request: NextRequest, authUser) => {
     const { fromAddress, fromLat, fromLng, toAddress } = createOrderSchema.parse(
       await request.json(),
     );
-    console.log(fromAddress, fromLat, fromLng, toAddress);
+    // console.log(fromAddress, fromLat, fromLng, toAddress);
 
     const order = await OrdersService.createOrder({
       clientId: authUser.userId,

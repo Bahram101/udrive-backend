@@ -51,4 +51,20 @@ export const DriverService = {
       orderBy: { createdAt: "desc" },
     });
   },
+
+  // Temporary: shows every unassigned order to every driver, regardless of
+  // distance. Once auto-assignment is trusted, this goes away in favor of
+  // getCurrentOrderForDriver.
+  async getNewOrders(userId: string): Promise<Order[]> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
+
+    if (!driver) {
+      throw new AppError(403, "Only drivers can view driver orders");
+    }
+
+    return prisma.order.findMany({
+      where: { status: "NEW" },
+      orderBy: { createdAt: "desc" },
+    });
+  },
 };
