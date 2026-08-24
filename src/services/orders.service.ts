@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { distanceKm } from "@/lib/geo";
-import { getIO } from "@/lib/socket";
 import { Order } from "@/generated/prisma/client";
 
 interface CreateOrderInput {
@@ -63,7 +62,7 @@ export const OrdersService = {
       lng: fromLng,
     });
 
-    const order = await prisma.order.create({
+    return prisma.order.create({
       data: {
         clientId,
         fromAddress,
@@ -75,14 +74,25 @@ export const OrdersService = {
         status: driverId ? "ACCEPTED" : "NEW",
       },
     });
+  },
 
-    const io = getIO();
-    if (order.status === "NEW") {
-      io.to("drivers").emit("order:new", order);
-    } else if (order.driverId) {
-      io.to(`driver:${order.driverId}`).emit("order:assigned", order);
+  async getCurrentOrderForClient(clientId: string): Promise<Order | null> {
+    const client = await prisma.user.findUnique({ where: { id: clientId } });
+
+    if (!client) {
+      throw new AppError(404, "User not found");
     }
 
-    return order;
+    if (client.role !== "CLIENT") {
+      throw new AppError(403, "Only clients can view client orders");
+    }
+
+    return prisma.order.findFirst({
+      where: {
+        clientId,
+        status: { notIn: ["COMPLETED", "CANCELLED"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
   },
 };
