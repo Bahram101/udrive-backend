@@ -112,6 +112,27 @@ export const OrdersService = {
     });
   },
 
+  async cancelOrder(orderId: string, clientId: string): Promise<Order> {
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+    if (!order) {
+      throw new AppError(404, "Order not found");
+    }
+
+    if (order.clientId !== clientId) {
+      throw new AppError(403, "You can only cancel your own orders");
+    }
+
+    if (order.status === "COMPLETED" || order.status === "CANCELLED") {
+      throw new AppError(400, `Order is already ${order.status.toLowerCase()}`);
+    }
+
+    return prisma.order.update({
+      where: { id: orderId },
+      data: { status: "CANCELLED" },
+    });
+  },
+
   async getNewOrders(userId: string): Promise<Order[]> {
     const driver = await prisma.driver.findUnique({ where: { userId } });
 
