@@ -4,13 +4,12 @@ import { createOrderSchema } from "@/schemas/orders.schema";
 import { OrdersService } from "@/services/orders.service";
 import { handleApiError } from "@/lib/errors";
 
-// POST /api/orders
+// POST /api/client/orders
 export const POST = withAuth(async (request: NextRequest, authUser) => {
   try {
     const { fromAddress, fromLat, fromLng, toAddress } = createOrderSchema.parse(
       await request.json(),
     );
-    // console.log(fromAddress, fromLat, fromLng, toAddress);
 
     const order = await OrdersService.createOrder({
       clientId: authUser.userId,

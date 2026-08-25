@@ -95,4 +95,33 @@ export const OrdersService = {
       orderBy: { createdAt: "desc" },
     });
   },
+
+  async getCurrentOrderForDriver(userId: string): Promise<Order | null> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
+
+    if (!driver) {
+      throw new AppError(403, "Only drivers can view driver orders");
+    }
+
+    return prisma.order.findFirst({
+      where: {
+        driverId: driver.id,
+        status: { notIn: ["COMPLETED", "CANCELLED"] },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
+  async getNewOrders(userId: string): Promise<Order[]> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
+
+    if (!driver) {
+      throw new AppError(403, "Only drivers can view driver orders");
+    }
+
+    return prisma.order.findMany({
+      where: { status: "NEW" },
+      orderBy: { createdAt: "desc" },
+    });
+  },
 };

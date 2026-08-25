@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
-import { Driver, Order } from "@/generated/prisma/client";
+import { Driver } from "@/generated/prisma/client";
 
 interface UpdateDriverStatusInput {
   userId: string;
@@ -33,38 +33,6 @@ export const DriverService = {
         ...(lat !== undefined && { lat }),
         ...(lng !== undefined && { lng }),
       },
-    });
-  },
-
-  async getCurrentOrderForDriver(userId: string): Promise<Order | null> {
-    const driver = await prisma.driver.findUnique({ where: { userId } });
-
-    if (!driver) {
-      throw new AppError(403, "Only drivers can view driver orders");
-    }
-
-    return prisma.order.findFirst({
-      where: {
-        driverId: driver.id,
-        status: { notIn: ["COMPLETED", "CANCELLED"] },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-  },
-
-  // Temporary: shows every unassigned order to every driver, regardless of
-  // distance. Once auto-assignment is trusted, this goes away in favor of
-  // getCurrentOrderForDriver.
-  async getNewOrders(userId: string): Promise<Order[]> {
-    const driver = await prisma.driver.findUnique({ where: { userId } });
-
-    if (!driver) {
-      throw new AppError(403, "Only drivers can view driver orders");
-    }
-
-    return prisma.order.findMany({
-      where: { status: "NEW" },
-      orderBy: { createdAt: "desc" },
     });
   },
 };
