@@ -17,7 +17,15 @@ async function findNearestOnlineDriverId(point: {
   lng: number;
 }): Promise<string | null> {
   const onlineDrivers = await prisma.driver.findMany({
-    where: { isOnline: true, lat: { not: null }, lng: { not: null } },
+    where: {
+      isOnline: true,
+      lat: { not: null },
+      lng: { not: null },
+      // A driver can only have one active order at a time.
+      orders: {
+        none: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+      },
+    },
   });
 
   let nearestId: string | null = null;
@@ -121,6 +129,33 @@ export const OrdersService = {
 
     if (order.clientId !== clientId) {
       throw new AppError(403, "You can only cancel your own orders");
+    }
+
+    if (order.status === "COMPLETED" || order.status === "CANCELLED") {
+      throw new AppError(400, `Order is already ${order.status.toLowerCase()}`);
+    }
+
+    return prisma.order.update({
+      where: { id: orderId },
+      data: { status: "CANCELLED" },
+    });
+  },
+
+  async cancelOrderAsDriver(orderId: string, userId: string): Promise<Order> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
+
+    if (!driver) {
+      throw new AppError(403, "Only drivers can cancel driver orders");
+    }
+
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+    if (!order) {
+      throw new AppError(404, "Order not found");
+    }
+
+    if (order.driverId !== driver.id) {
+      throw new AppError(403, "You can only cancel your own assigned orders");
     }
 
     if (order.status === "COMPLETED" || order.status === "CANCELLED") {
