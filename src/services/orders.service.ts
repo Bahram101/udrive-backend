@@ -21,7 +21,6 @@ async function findNearestOnlineDriverId(point: {
       isOnline: true,
       lat: { not: null },
       lng: { not: null },
-      // A driver can only have one active order at a time.
       orders: {
         none: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
       },
@@ -84,6 +83,8 @@ export const OrdersService = {
     });
   },
 
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  
   async getCurrentOrderForClient(clientId: string): Promise<Order | null> {
     const client = await prisma.user.findUnique({ where: { id: clientId } });
 
@@ -95,14 +96,18 @@ export const OrdersService = {
       throw new AppError(403, "Only clients can view client orders");
     }
 
-    return prisma.order.findFirst({
+    const currentOrder = prisma.order.findFirst({
       where: {
         clientId,
         status: { notIn: ["COMPLETED", "CANCELLED"] },
       },
       orderBy: { createdAt: "desc" },
     });
+
+    return currentOrder;
   },
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   async getCurrentOrderForDriver(userId: string): Promise<Order | null> {
     const driver = await prisma.driver.findUnique({ where: { userId } });
@@ -119,6 +124,8 @@ export const OrdersService = {
       orderBy: { createdAt: "desc" },
     });
   },
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   async cancelOrder(orderId: string, clientId: string): Promise<Order> {
     const order = await prisma.order.findUnique({ where: { id: orderId } });
@@ -140,6 +147,47 @@ export const OrdersService = {
       data: { status: "CANCELLED" },
     });
   },
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // Called when a driver comes online — picks up any order that was created
+  // while no driver was available (status stayed NEW, driverId null),
+  // instead of leaving it stuck forever. Mirrors findNearestOnlineDriverId,
+  // just from the other direction (driver -> nearest pending order).
+  async assignNearestPendingOrder(
+    driverId: string,
+    point: { lat: number; lng: number },
+  ): Promise<Order | null> {
+    const pendingOrders = await prisma.order.findMany({
+      where: { status: "NEW", driverId: null },
+    });
+
+    let nearest: Order | null = null;
+    let nearestDistance = Infinity;
+
+    for (const order of pendingOrders) {
+      const distance = distanceKm(point, {
+        lat: order.fromLat,
+        lng: order.fromLng,
+      });
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = order;
+      }
+    }
+
+    if (!nearest) {
+      return null;
+    }
+
+    return prisma.order.update({
+      where: { id: nearest.id },
+      data: { driverId, status: "ACCEPTED" },
+    });
+  },
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   async cancelOrderAsDriver(orderId: string, userId: string): Promise<Order> {
     const driver = await prisma.driver.findUnique({ where: { userId } });
