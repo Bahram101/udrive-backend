@@ -3,6 +3,10 @@ import { AppError } from "@/lib/errors";
 import { distanceKm } from "@/lib/geo";
 import { Order } from "@/generated/prisma/client";
 
+type OrderWithDriverLocation = Order & {
+  driver: { lat: number | null; lng: number | null } | null;
+};
+
 interface CreateOrderInput {
   clientId: string;
   fromAddress: string;
@@ -85,7 +89,9 @@ export const OrdersService = {
 
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////
   
-  async getCurrentOrderForClient(clientId: string): Promise<Order | null> {
+  async getCurrentOrderForClient(
+    clientId: string,
+  ): Promise<OrderWithDriverLocation | null> {
     const client = await prisma.user.findUnique({ where: { id: clientId } });
 
     if (!client) {
@@ -102,6 +108,7 @@ export const OrdersService = {
         status: { notIn: ["COMPLETED", "CANCELLED"] },
       },
       orderBy: { createdAt: "desc" },
+      include: { driver: { select: { lat: true, lng: true } } },
     });
 
     return currentOrder;
