@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { distanceKm } from "@/lib/geo";
-import { Order } from "@/generated/prisma/client";
+import { Order, OrderStatus } from "@/generated/prisma/client";
 
 type OrderWithDriverLocation = Order & {
   driver: { lat: number | null; lng: number | null } | null;
@@ -49,6 +49,41 @@ async function findNearestOnlineDriverId(point: {
   return nearestId;
 }
 
+async function transitionDriverOrderStatus(
+  orderId: string,
+  userId: string,
+  from: OrderStatus,
+  to: OrderStatus,
+): Promise<Order> {
+  const driver = await prisma.driver.findUnique({ where: { userId } });
+
+  if (!driver) {
+    throw new AppError(403, "Only drivers can update order status");
+  }
+
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+  if (!order) {
+    throw new AppError(404, "Order not found");
+  }
+
+  if (order.driverId !== driver.id) {
+    throw new AppError(403, "You can only update your own assigned orders");
+  }
+
+  if (order.status !== from) {
+    throw new AppError(
+      400,
+      `Order must be ${from} to move to ${to}, current status is ${order.status}`,
+    );
+  }
+
+  return prisma.order.update({
+    where: { id: orderId },
+    data: { status: to },
+  });
+}
+
 export const OrdersService = {
   async createOrder({
     clientId,
@@ -86,8 +121,6 @@ export const OrdersService = {
       },
     });
   },
-
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
   
   async getCurrentOrderForClient(
     clientId: string,
@@ -114,8 +147,6 @@ export const OrdersService = {
     return currentOrder;
   },
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
   async getCurrentOrderForDriver(userId: string): Promise<Order | null> {
     const driver = await prisma.driver.findUnique({ where: { userId } });
 
@@ -132,9 +163,7 @@ export const OrdersService = {
     });
   },
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-  async cancelOrder(orderId: string, clientId: string): Promise<Order> {
+  async cancelOrderAsClient(orderId: string, clientId: string): Promise<Order> {
     const order = await prisma.order.findUnique({ where: { id: orderId } });
 
     if (!order) {
@@ -155,12 +184,34 @@ export const OrdersService = {
     });
   },
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  
+  async cancelOrderAsDriver(orderId: string, userId: string): Promise<Order> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
 
-  // Called when a driver comes online — picks up any order that was created
-  // while no driver was available (status stayed NEW, driverId null),
-  // instead of leaving it stuck forever. Mirrors findNearestOnlineDriverId,
-  // just from the other direction (driver -> nearest pending order).
+    if (!driver) {
+      throw new AppError(403, "Only drivers can cancel driver orders");
+    }
+
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+    if (!order) {
+      throw new AppError(404, "Order not found");
+    }
+
+    if (order.driverId !== driver.id) {
+      throw new AppError(403, "You can only cancel your own assigned orders");
+    }
+
+    if (order.status === "COMPLETED" || order.status === "CANCELLED") {
+      throw new AppError(400, `Order is already ${order.status.toLowerCase()}`);
+    }
+
+    return prisma.order.update({
+      where: { id: orderId },
+      data: { status: "CANCELLED" },
+    });
+  },
+
   async assignNearestPendingOrder(
     driverId: string,
     point: { lat: number; lng: number },
@@ -194,32 +245,16 @@ export const OrdersService = {
     });
   },
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-  async cancelOrderAsDriver(orderId: string, userId: string): Promise<Order> {
-    const driver = await prisma.driver.findUnique({ where: { userId } });
-
-    if (!driver) {
-      throw new AppError(403, "Only drivers can cancel driver orders");
-    }
-
-    const order = await prisma.order.findUnique({ where: { id: orderId } });
-
-    if (!order) {
-      throw new AppError(404, "Order not found");
-    }
-
-    if (order.driverId !== driver.id) {
-      throw new AppError(403, "You can only cancel your own assigned orders");
-    }
-
-    if (order.status === "COMPLETED" || order.status === "CANCELLED") {
-      throw new AppError(400, `Order is already ${order.status.toLowerCase()}`);
-    }
-
-    return prisma.order.update({
-      where: { id: orderId },
-      data: { status: "CANCELLED" },
-    });
+  async markOrderArrived(orderId: string, userId: string): Promise<Order> {
+    return transitionDriverOrderStatus(orderId, userId, "ACCEPTED", "ARRIVED");
   },
+
+  async startOrder(orderId: string, userId: string): Promise<Order> {
+    return transitionDriverOrderStatus(orderId, userId, "ARRIVED", "STARTED");
+  },
+
+  async completeOrder(orderId: string, userId: string): Promise<Order> {
+    return transitionDriverOrderStatus(orderId, userId, "STARTED", "COMPLETED");
+  },
+
 };
