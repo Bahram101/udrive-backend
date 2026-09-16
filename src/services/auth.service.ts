@@ -99,6 +99,53 @@ export const AuthService = {
     return issueTokens(user);
   },
 
+  async switchRole(userId: string): Promise<AuthResult> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { driver: true },
+    });
+
+    if (!user) {
+      throw new AppError(404, "User not found");
+    }
+
+    if (user.role !== "CLIENT" && user.role !== "DRIVER") {
+      throw new AppError(400, "This role cannot be switched");
+    }
+
+    const activeOrder = await prisma.order.findFirst({
+      where: {
+        status: { notIn: ["COMPLETED", "CANCELLED"] },
+        OR: [{ clientId: userId }, { driverId: user.driver?.id }],
+      },
+    });
+
+    if (activeOrder) {
+      throw new AppError(400, "Нельзя сменить роль при активном заказе");
+    }
+
+    const nextRole: Role = user.role === "DRIVER" ? "CLIENT" : "DRIVER";
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        role: nextRole,
+        ...(nextRole === "DRIVER" &&
+          !user.driver && { driver: { create: {} } }),
+      },
+      include: { driver: true },
+    });
+
+    if (nextRole === "CLIENT" && updated.driver?.isOnline) {
+      await prisma.driver.update({
+        where: { id: updated.driver.id },
+        data: { isOnline: false },
+      });
+    }
+
+    return issueTokens(updated);
+  },
+
   refreshAccessToken(refreshToken: string): { accessToken: string } {
     let payload: JwtPayload;
     try {
