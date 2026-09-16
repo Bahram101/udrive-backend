@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { distanceKm } from "@/lib/geo";
+import { sendPushNotification } from "@/lib/pushNotifications";
 import { Order, OrderStatus } from "@/generated/prisma/client";
 
 type OrderWithDriverLocation = Order & {
@@ -47,6 +48,23 @@ async function findNearestOnlineDriverId(point: {
   }
 
   return nearestId;
+}
+
+async function notifyDriverOfNewOrder(
+  driverId: string,
+  order: Order,
+): Promise<void> {
+  const driver = await prisma.driver.findUnique({
+    where: { id: driverId },
+    select: { pushToken: true },
+  });
+
+  await sendPushNotification(
+    driver?.pushToken,
+    "Новый заказ",
+    order.fromAddress,
+    { orderId: order.id },
+  );
 }
 
 async function transitionDriverOrderStatus(
@@ -108,7 +126,7 @@ export const OrdersService = {
       lng: fromLng,
     });
 
-    return prisma.order.create({
+    const order = await prisma.order.create({
       data: {
         clientId,
         fromAddress,
@@ -120,6 +138,12 @@ export const OrdersService = {
         status: driverId ? "ACCEPTED" : "NEW",
       },
     });
+
+    if (driverId) {
+      await notifyDriverOfNewOrder(driverId, order);
+    }
+
+    return order;
   },
   
   async getCurrentOrderForClient(
@@ -239,10 +263,14 @@ export const OrdersService = {
       return null;
     }
 
-    return prisma.order.update({
+    const order = await prisma.order.update({
       where: { id: nearest.id },
       data: { driverId, status: "ACCEPTED" },
     });
+
+    await notifyDriverOfNewOrder(driverId, order);
+
+    return order;
   },
 
   async markOrderArrived(orderId: string, userId: string): Promise<Order> {

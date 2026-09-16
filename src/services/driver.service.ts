@@ -52,4 +52,17 @@ export const DriverService = {
 
     return updated;
   },
+
+  async updatePushToken(userId: string, pushToken: string): Promise<Driver> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
+
+    if (!driver) {
+      throw new AppError(403, "Only drivers can register a push token");
+    }
+
+    return prisma.driver.update({
+      where: { userId },
+      data: { pushToken },
+    });
+  },
 };
