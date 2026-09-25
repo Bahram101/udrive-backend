@@ -14,7 +14,7 @@ export async function sendPushNotification(
 
   try {
     await expo.sendPushNotificationsAsync([
-      { to: pushToken, sound: "default", title, body, data },
+      { to: pushToken, sound: "alarm.wav", title, body, data },
     ]);
   } catch (error) {
     console.error("Failed to send push notification", error);
