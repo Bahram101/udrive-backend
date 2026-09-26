@@ -5,7 +5,7 @@ import { sendPushNotification } from "@/lib/pushNotifications";
 import { Order, OrderStatus } from "@/generated/prisma/client";
 
 type OrderWithDriverLocation = Order & {
-  driver: { lat: number | null; lng: number | null } | null;
+  driver: { name: string; lat: number | null; lng: number | null } | null;
 };
 
 interface CreateOrderInput {
@@ -159,16 +159,31 @@ export const OrdersService = {
       throw new AppError(403, "Only clients can view client orders");
     }
 
-    const currentOrder = prisma.order.findFirst({
+    const currentOrder = await prisma.order.findFirst({
       where: {
         clientId,
         status: { notIn: ["COMPLETED", "CANCELLED"] },
       },
       orderBy: { createdAt: "desc" },
-      include: { driver: { select: { lat: true, lng: true } } },
+      include: {
+        driver: {
+          select: { lat: true, lng: true, user: { select: { name: true } } },
+        },
+      },
     });
 
-    return currentOrder;
+    if (!currentOrder) {
+      return null;
+    }
+
+    return {
+      ...currentOrder,
+      driver: currentOrder.driver && {
+        name: currentOrder.driver.user.name,
+        lat: currentOrder.driver.lat,
+        lng: currentOrder.driver.lng,
+      },
+    };
   },
 
   async getCurrentOrderForDriver(userId: string): Promise<Order | null> {
