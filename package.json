@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "telegram:webhook": "node scripts/set-telegram-webhook.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",

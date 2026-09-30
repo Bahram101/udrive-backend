@@ -61,6 +61,17 @@ model Order {
   driver Driver? @relation(fields: [driverId], references: [id])
 }
 
+model TelegramLink {
+  id     String @id @default(uuid())
+  phone  String @unique
+  chatId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([phone])
+}
+
 model OtpCode {
   id        String   @id @default(uuid())
   phone     String

@@ -1,12 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
-import { OTP_TTL_MS } from "@/lib/constants";
+import { createOtpCode } from "@/lib/otp";
 import { JwtPayload, signAccessToken, signRefreshToken, verifyRefreshToken } from "@/lib/jwt";
+import { TelegramService } from "@/services/telegram.service";
 import { Role } from "@/generated/prisma/client";
-
-function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
 
 interface VerifyOtpInput {
   phone: string;
@@ -50,15 +47,15 @@ function issueTokens(user: {
 }
 
 export const AuthService = {
-  async sendOtp(phone: string): Promise<{ code: string }> {
-    await prisma.otpCode.deleteMany({ where: { phone } });
+  async sendOtp(phone: string): Promise<{ code: string; needsTelegramLink: boolean }> {
+    const chatId = await TelegramService.getChatIdForPhone(phone);
+    const code = await createOtpCode(phone);
 
-    const code = generateOtp();
-    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+    if (chatId) {
+      await TelegramService.sendMessage(chatId, `Код подтверждения uDrive: ${code}`);
+    }
 
-    await prisma.otpCode.create({ data: { phone, code, expiresAt } });
-
-    return { code };
+    return { code, needsTelegramLink: !chatId };
   },
 
   async verifyOtp({ phone, code, name, role }: VerifyOtpInput): Promise<AuthResult> {
