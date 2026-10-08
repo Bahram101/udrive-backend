@@ -65,4 +65,21 @@ export const DriverService = {
       data: { pushToken },
     });
   },
+
+  async updateDriverLocation(userId: string, lat: number, lng: number): Promise<Driver> {
+    const driver = await prisma.driver.findUnique({ where: { userId } });
+
+    if (!driver) {
+      throw new AppError(403, "Only drivers can update driver location");
+    }
+
+    if (!driver.isOnline) {
+      throw new AppError(409, "Driver is offline");
+    }
+
+    return prisma.driver.update({
+      where: { userId },
+      data: { lat, lng },
+    });
+  },
 };

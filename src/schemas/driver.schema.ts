@@ -9,3 +9,8 @@ export const updateDriverStatusSchema = z.object({
 export const updatePushTokenSchema = z.object({
   pushToken: z.string({ error: "pushToken is required" }),
 });
+
+export const updateDriverLocationSchema = z.object({
+  lat: z.number({ error: "lat is required" }),
+  lng: z.number({ error: "lng is required" }),
+});
