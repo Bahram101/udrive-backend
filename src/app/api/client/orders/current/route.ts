@@ -8,7 +8,7 @@ export const GET = withAuth(async (_request: NextRequest, authUser) => {
   try {
     const order = await OrdersService.getCurrentOrderForClient(authUser.userId);
 
-    return Response.json({ order }, { status: 201 });
+    return Response.json({ order });
   } catch (error) {
     return handleApiError(error);
   }

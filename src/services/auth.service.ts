@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
-import { createOtpCode } from "@/lib/otp";
+import { createOtpCode, checkOtpRateLimit } from "@/lib/otp";
 import { JwtPayload, signAccessToken, signRefreshToken, verifyRefreshToken } from "@/lib/jwt";
 import { TelegramService } from "@/services/telegram.service";
 import { Role } from "@/generated/prisma/client";
@@ -20,7 +20,32 @@ interface AuthResult {
     phone: string;
     name: string;
     role: Role;
+    email: string | null;
+    avatar: string | null;
+    rating: number | null;
     driver?: { id: string };
+  };
+}
+
+export function serializeAuthUser(user: {
+  id: string;
+  phone: string;
+  name: string;
+  role: Role;
+  email: string | null;
+  avatar: string | null;
+  rating: number | null;
+  driver?: { id: string } | null;
+}) {
+  return {
+    id: user.id,
+    phone: user.phone,
+    name: user.name,
+    role: user.role,
+    email: user.email,
+    avatar: user.avatar,
+    rating: user.rating,
+    ...(user.driver && { driver: { id: user.driver.id } }),
   };
 }
 
@@ -29,6 +54,9 @@ function issueTokens(user: {
   phone: string;
   name: string;
   role: Role;
+  email: string | null;
+  avatar: string | null;
+  rating: number | null;
   driver: { id: string } | null;
 }): AuthResult {
   const payload: JwtPayload = { userId: user.id, phone: user.phone, role: user.role };
@@ -36,22 +64,16 @@ function issueTokens(user: {
   return {
     accessToken: signAccessToken(payload),
     refreshToken: signRefreshToken(payload),
-    user: {
-      id: user.id,
-      phone: user.phone,
-      name: user.name,
-      role: user.role,
-      ...(user.driver && { driver: { id: user.driver.id } }),
-    },
+    user: serializeAuthUser(user),
   };
 }
 
 export const AuthService = {
   async sendOtp(phone: string): Promise<{ needsTelegramLink: boolean }> {
+    await checkOtpRateLimit(phone);
     const chatId = await TelegramService.getChatIdForPhone(phone);
-    const code = await createOtpCode(phone);
-
     if (chatId) {
+      const code = await createOtpCode(phone);
       await TelegramService.sendMessage(chatId, `Код подтверждения uDrive: ${code}`);
     }
 

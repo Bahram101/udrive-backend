@@ -59,6 +59,10 @@ model Order {
 
   client User    @relation(fields: [clientId], references: [id])
   driver Driver? @relation(fields: [driverId], references: [id])
+
+  @@index([status])
+  @@index([driverId])
+  @@index([clientId])
 }
 
 model TelegramLink {

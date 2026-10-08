@@ -91,10 +91,17 @@ async function transitionDriverOrderStatus(
     );
   }
 
-  return prisma.order.update({
-    where: { id: orderId },
+  const result = await prisma.order.updateMany({
+    where: { id: orderId, driverId: driver.id, status: from },
     data: { status: to },
   });
+
+  if (result.count !== 1) {
+    throw new AppError(409, "Статус заказа уже изменился");
+  }
+
+  const updated = await prisma.order.findUnique({ where: { id: orderId } });
+  return updated!;
 }
 
 export const OrdersService = {
@@ -250,10 +257,17 @@ export const OrdersService = {
       throw new AppError(400, `Order is already ${order.status.toLowerCase()}`);
     }
 
-    return prisma.order.update({
-      where: { id: orderId },
+    const result = await prisma.order.updateMany({
+      where: { id: orderId, clientId, status: order.status },
       data: { status: "CANCELLED" },
     });
+
+    if (result.count !== 1) {
+      throw new AppError(409, "Статус заказа уже изменился");
+    }
+
+    const updated = await prisma.order.findUnique({ where: { id: orderId } });
+    return updated!;
   },
 
   
@@ -278,10 +292,17 @@ export const OrdersService = {
       throw new AppError(400, `Order is already ${order.status.toLowerCase()}`);
     }
 
-    return prisma.order.update({
-      where: { id: orderId },
+    const result = await prisma.order.updateMany({
+      where: { id: orderId, driverId: driver.id, status: order.status },
       data: { status: "CANCELLED" },
     });
+
+    if (result.count !== 1) {
+      throw new AppError(409, "Статус заказа уже изменился");
+    }
+
+    const updated = await prisma.order.findUnique({ where: { id: orderId } });
+    return updated!;
   },
 
   async assignNearestPendingOrder(

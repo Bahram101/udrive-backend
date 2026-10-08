@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PHONE_REGEX } from "@/lib/constants";
-import { createOtpCode } from "@/lib/otp";
+import { createOtpCode, checkOtpRateLimit } from "@/lib/otp";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 
@@ -78,6 +78,14 @@ export const TelegramService = {
       create: { phone, chatId },
       update: { chatId },
     });
+
+    try {
+      await checkOtpRateLimit(phone);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Слишком много запросов.";
+      await this.sendMessage(chatId, msg);
+      return;
+    }
 
     const code = await createOtpCode(phone);
 
