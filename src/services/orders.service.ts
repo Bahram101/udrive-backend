@@ -17,10 +17,10 @@ interface CreateOrderInput {
   price: number;
 }
 
-async function findNearestOnlineDriverId(point: {
-  lat: number;
-  lng: number;
-}): Promise<string | null> {
+async function findNearestOnlineDrivers(
+  point: { lat: number; lng: number },
+  limit: number = 3,
+): Promise<string[]> {
   const onlineDrivers = await prisma.driver.findMany({
     where: {
       isOnline: true,
@@ -32,22 +32,17 @@ async function findNearestOnlineDriverId(point: {
     },
   });
 
-  let nearestId: string | null = null;
-  let nearestDistance = Infinity;
-
-  for (const driver of onlineDrivers) {
-    const distance = distanceKm(point, {
+  const withDistance = onlineDrivers.map((driver) => ({
+    id: driver.id,
+    distance: distanceKm(point, {
       lat: driver.lat!,
       lng: driver.lng!,
-    });
+    }),
+  }));
 
-    if (distance < nearestDistance) {
-      nearestDistance = distance;
-      nearestId = driver.id;
-    }
-  }
+  withDistance.sort((a, b) => a.distance - b.distance);
 
-  return nearestId;
+  return withDistance.slice(0, limit).map((d) => d.id);
 }
 
 async function notifyDriverOfNewOrder(
@@ -121,26 +116,64 @@ export const OrdersService = {
       throw new AppError(403, "Only clients can create orders");
     }
 
-    const driverId = await findNearestOnlineDriverId({
+    const candidates = await findNearestOnlineDrivers({
       lat: fromLat,
       lng: fromLng,
     });
 
-    const order = await prisma.order.create({
-      data: {
-        clientId,
-        fromAddress,
-        fromLat,
-        fromLng,
-        toAddress,
-        price,
-        driverId,
-        status: driverId ? "ACCEPTED" : "NEW",
-      },
-    });
+    let order: Order | null = null;
 
-    if (driverId) {
-      await notifyDriverOfNewOrder(driverId, order);
+    for (const candidateId of candidates) {
+      order = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${candidateId} FOR UPDATE`;
+
+        const driver = await tx.driver.findUnique({
+          where: { id: candidateId },
+          include: {
+            orders: {
+              where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+            },
+          },
+        });
+
+        if (driver && driver.isOnline && driver.orders.length === 0) {
+          return tx.order.create({
+            data: {
+              clientId,
+              fromAddress,
+              fromLat,
+              fromLng,
+              toAddress,
+              price,
+              driverId: candidateId,
+              status: "ACCEPTED",
+            },
+          });
+        }
+        return null;
+      });
+
+      if (order) {
+        break;
+      }
+    }
+
+    if (!order) {
+      order = await prisma.order.create({
+        data: {
+          clientId,
+          fromAddress,
+          fromLat,
+          fromLng,
+          toAddress,
+          price,
+          status: "NEW",
+        },
+      });
+    }
+
+    if (order.driverId) {
+      await notifyDriverOfNewOrder(order.driverId, order);
     }
 
     return order;
@@ -259,33 +292,53 @@ export const OrdersService = {
       where: { status: "NEW", driverId: null },
     });
 
-    let nearest: Order | null = null;
-    let nearestDistance = Infinity;
-
-    for (const order of pendingOrders) {
-      const distance = distanceKm(point, {
+    const withDistance = pendingOrders.map((order) => ({
+      order,
+      distance: distanceKm(point, {
         lat: order.fromLat,
         lng: order.fromLng,
+      }),
+    }));
+
+    withDistance.sort((a, b) => a.distance - b.distance);
+    const candidates = withDistance.slice(0, 3).map((d) => d.order);
+
+    for (const candidate of candidates) {
+      const assignedOrder = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${driverId} FOR UPDATE`;
+
+        const driver = await tx.driver.findUnique({
+          where: { id: driverId },
+          include: {
+            orders: {
+              where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+            },
+          },
+        });
+
+        if (!driver || !driver.isOnline || driver.orders.length > 0) {
+          return null;
+        }
+
+        const result = await tx.order.updateMany({
+          where: { id: candidate.id, status: "NEW", driverId: null },
+          data: { driverId, status: "ACCEPTED" },
+        });
+
+        if (result.count === 1) {
+          return tx.order.findUnique({ where: { id: candidate.id } });
+        }
+
+        return null;
       });
 
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearest = order;
+      if (assignedOrder) {
+        await notifyDriverOfNewOrder(driverId, assignedOrder);
+        return assignedOrder;
       }
     }
 
-    if (!nearest) {
-      return null;
-    }
-
-    const order = await prisma.order.update({
-      where: { id: nearest.id },
-      data: { driverId, status: "ACCEPTED" },
-    });
-
-    await notifyDriverOfNewOrder(driverId, order);
-
-    return order;
+    return null;
   },
 
   async markOrderArrived(orderId: string, userId: string): Promise<Order> {

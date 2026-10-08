@@ -47,7 +47,7 @@ function issueTokens(user: {
 }
 
 export const AuthService = {
-  async sendOtp(phone: string): Promise<{ code: string; needsTelegramLink: boolean }> {
+  async sendOtp(phone: string): Promise<{ needsTelegramLink: boolean }> {
     const chatId = await TelegramService.getChatIdForPhone(phone);
     const code = await createOtpCode(phone);
 
@@ -55,7 +55,7 @@ export const AuthService = {
       await TelegramService.sendMessage(chatId, `Код подтверждения uDrive: ${code}`);
     }
 
-    return { code, needsTelegramLink: !chatId };
+    return { needsTelegramLink: !chatId };
   },
 
   async verifyOtp({ phone, code, name, role }: VerifyOtpInput): Promise<AuthResult> {
