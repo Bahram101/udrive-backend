@@ -363,7 +363,30 @@ export const OrdersService = {
   },
 
   async markOrderArrived(orderId: string, userId: string): Promise<Order> {
-    return transitionDriverOrderStatus(orderId, userId, "ACCEPTED", "ARRIVED");
+    const order = await transitionDriverOrderStatus(orderId, userId, "ACCEPTED", "ARRIVED");
+
+    try {
+      const orderWithClient = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: { client: true, driver: { include: { user: true } } },
+      });
+
+      if (orderWithClient?.client?.pushToken) {
+        const driverName = orderWithClient.driver?.user?.name || "Водитель";
+        await sendPushNotification(
+          orderWithClient.client.pushToken,
+          "Водитель прибыл",
+          `${driverName} ждет вас`,
+          { orderId, type: "ORDER_ARRIVED" },
+          "order-status-v2",
+          "arrived.wav"
+        );
+      }
+    } catch (e) {
+      console.error("Failed to send arrived push", e);
+    }
+
+    return order;
   },
 
   async startOrder(orderId: string, userId: string): Promise<Order> {
