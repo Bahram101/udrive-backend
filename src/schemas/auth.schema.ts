@@ -3,7 +3,7 @@ import { PHONE_REGEX } from "@/lib/constants";
 
 const phoneSchema = z
   .string({ error: "phone is required" })
-  .regex(PHONE_REGEX, "Invalid phone number. Must be in format +7XXXXXXXXXX");
+  .regex(PHONE_REGEX, "Неверный номер. Формат: +7 (7XX) XXX XX XX");
 
 export const sendOtpSchema = z.object({
   phone: phoneSchema,
