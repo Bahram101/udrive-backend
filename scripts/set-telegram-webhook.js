@@ -10,6 +10,12 @@ async function main() {
     process.exit(1);
   }
 
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error("TELEGRAM_WEBHOOK_SECRET is not set in .env");
+    process.exit(1);
+  }
+
   let tunnels;
   try {
     const res = await fetch(NGROK_API);
@@ -29,9 +35,11 @@ async function main() {
 
   const webhookUrl = `${tunnel.public_url}/api/telegram/webhook`;
 
-  const res = await fetch(
-    `https://api.telegram.org/bot${token}/setWebhook?url=${webhookUrl}`,
-  );
+  const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: webhookUrl, secret_token: secret }),
+  });
   const result = await res.json();
 
   console.log(`Webhook URL: ${webhookUrl}`);
