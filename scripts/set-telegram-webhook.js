@@ -1,6 +1,4 @@
-const { config } = require("dotenv");
-config();
-
+// Env is loaded by Node itself: `node --env-file=.env` (see package.json).
 const NGROK_API = "http://127.0.0.1:4040/api/tunnels";
 
 async function main() {
