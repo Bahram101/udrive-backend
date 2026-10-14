@@ -81,6 +81,7 @@ model OtpCode {
   id        String   @id @default(uuid())
   phone     String
   code      String
+  attempts  Int      @default(0)
   expiresAt DateTime
 
   createdAt DateTime @default(now())

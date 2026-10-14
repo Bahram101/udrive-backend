@@ -1,9 +1,10 @@
+import { randomInt } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { OTP_TTL_MS } from "@/lib/constants";
 import { AppError } from "@/lib/errors";
 
 function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(100000, 1000000).toString();
 }
 
 export async function checkOtpRateLimit(phone: string) {

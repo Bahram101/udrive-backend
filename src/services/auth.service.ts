@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { createOtpCode, checkOtpRateLimit } from "@/lib/otp";
+import { OTP_MAX_ATTEMPTS } from "@/lib/constants";
 import { JwtPayload, signAccessToken, signRefreshToken, verifyRefreshToken } from "@/lib/jwt";
 import { TelegramService } from "@/services/telegram.service";
 import { Role } from "@/generated/prisma/client";
@@ -81,39 +82,61 @@ export const AuthService = {
   },
 
   async verifyOtp({ phone, code, name, role }: VerifyOtpInput): Promise<AuthResult> {
+    const now = new Date();
     const otpRecord = await prisma.otpCode.findFirst({
-      where: { phone, code },
+      where: { phone, expiresAt: { gt: now } },
       orderBy: { createdAt: "desc" },
     });
 
     if (!otpRecord) {
-      throw new AppError(401, "Invalid OTP code");
-    }
-
-    if (otpRecord.expiresAt < new Date()) {
-      await prisma.otpCode.delete({ where: { id: otpRecord.id } });
       throw new AppError(401, "OTP code has expired");
     }
 
-    let user = await prisma.user.findUnique({ where: { phone }, include: { driver: true } });
+    // Spend one attempt before comparing: atomic, so parallel guesses can't exceed the limit.
+    const { count: attemptTaken } = await prisma.otpCode.updateMany({
+      where: { id: otpRecord.id, attempts: { lt: OTP_MAX_ATTEMPTS }, expiresAt: { gt: now } },
+      data: { attempts: { increment: 1 } },
+    });
 
-    if (!user) {
-      if (!name || !role) {
-        throw new AppError(422, "Name and role are required for new users", { isNewUser: true });
-      }
-
-      user = await prisma.user.create({
-        data: {
-          phone,
-          name,
-          role,
-          ...(role === "DRIVER" && { driver: { create: {} } }),
-        },
-        include: { driver: true },
-      });
+    if (attemptTaken !== 1) {
+      throw new AppError(429, "Слишком много попыток. Запросите новый код.");
     }
 
-    await prisma.otpCode.delete({ where: { id: otpRecord.id } });
+    if (otpRecord.code !== code) {
+      throw new AppError(401, "Invalid OTP code");
+    }
+
+    // Single use: only one request can consume the code.
+    const consumeOtp = async () => {
+      const { count } = await prisma.otpCode.deleteMany({ where: { id: otpRecord.id } });
+      if (count !== 1) {
+        throw new AppError(401, "Invalid OTP code");
+      }
+    };
+
+    const existingUser = await prisma.user.findUnique({ where: { phone }, include: { driver: true } });
+
+    if (existingUser) {
+      await consumeOtp();
+      return issueTokens(existingUser);
+    }
+
+    if (!name || !role) {
+      // Code stays valid: the client resends it together with name and role.
+      throw new AppError(422, "Name and role are required for new users", { isNewUser: true });
+    }
+
+    await consumeOtp();
+
+    const user = await prisma.user.create({
+      data: {
+        phone,
+        name,
+        role,
+        ...(role === "DRIVER" && { driver: { create: {} } }),
+      },
+      include: { driver: true },
+    });
 
     return issueTokens(user);
   },
