@@ -93,7 +93,7 @@ async function transitionDriverOrderStatus(
 
   const result = await prisma.order.updateMany({
     where: { id: orderId, driverId: driver.id, status: from },
-    data: { status: to },
+    data: { status: to, ...(to === "COMPLETED" && { completedAt: new Date() }) },
   });
 
   if (result.count !== 1) {
@@ -102,6 +102,41 @@ async function transitionDriverOrderStatus(
 
   const updated = await prisma.order.findUnique({ where: { id: orderId } });
   return updated!;
+}
+
+// Assigns a NEW order to a driver if the driver is still online and free.
+// The driver row lock serializes this with other assignments to the same driver.
+async function tryAssignOrderToDriver(
+  orderId: string,
+  driverId: string,
+): Promise<Order | null> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${driverId} FOR UPDATE`;
+
+    const driver = await tx.driver.findUnique({
+      where: { id: driverId },
+      include: {
+        orders: {
+          where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+        },
+      },
+    });
+
+    if (!driver || !driver.isOnline || driver.orders.length > 0) {
+      return null;
+    }
+
+    const result = await tx.order.updateMany({
+      where: { id: orderId, status: "NEW", driverId: null },
+      data: { driverId, status: "ACCEPTED" },
+    });
+
+    if (result.count !== 1) {
+      return null;
+    }
+
+    return tx.order.findUnique({ where: { id: orderId } });
+  });
 }
 
 export const OrdersService = {
@@ -123,50 +158,20 @@ export const OrdersService = {
       throw new AppError(403, "Only clients can create orders");
     }
 
-    const candidates = await findNearestOnlineDrivers({
-      lat: fromLat,
-      lng: fromLng,
-    });
+    // Client row lock: parallel requests can't create two active orders.
+    const order = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${clientId} FOR UPDATE`;
 
-    let order: Order | null = null;
-
-    for (const candidateId of candidates) {
-      order = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${candidateId} FOR UPDATE`;
-
-        const driver = await tx.driver.findUnique({
-          where: { id: candidateId },
-          include: {
-            orders: {
-              where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
-            },
-          },
-        });
-
-        if (driver && driver.isOnline && driver.orders.length === 0) {
-          return tx.order.create({
-            data: {
-              clientId,
-              fromAddress,
-              fromLat,
-              fromLng,
-              toAddress,
-              price,
-              driverId: candidateId,
-              status: "ACCEPTED",
-            },
-          });
-        }
-        return null;
+      const activeOrder = await tx.order.findFirst({
+        where: { clientId, status: { notIn: ["COMPLETED", "CANCELLED"] } },
+        select: { id: true },
       });
 
-      if (order) {
-        break;
+      if (activeOrder) {
+        throw new AppError(409, "У вас уже есть активный заказ");
       }
-    }
 
-    if (!order) {
-      order = await prisma.order.create({
+      return tx.order.create({
         data: {
           clientId,
           fromAddress,
@@ -177,13 +182,25 @@ export const OrdersService = {
           status: "NEW",
         },
       });
+    });
+
+    const candidates = await findNearestOnlineDrivers({
+      lat: fromLat,
+      lng: fromLng,
+    });
+
+    for (const candidateId of candidates) {
+      const assigned = await tryAssignOrderToDriver(order.id, candidateId);
+
+      if (assigned) {
+        await notifyDriverOfNewOrder(candidateId, assigned);
+        return assigned;
+      }
     }
 
-    if (order.driverId) {
-      await notifyDriverOfNewOrder(order.driverId, order);
-    }
-
-    return order;
+    // Not assigned here: still NEW, or taken meanwhile by a driver going online.
+    const current = await prisma.order.findUnique({ where: { id: order.id } });
+    return current!;
   },
   
   async getCurrentOrderForClient(
@@ -259,7 +276,7 @@ export const OrdersService = {
 
     const result = await prisma.order.updateMany({
       where: { id: orderId, clientId, status: order.status },
-      data: { status: "CANCELLED" },
+      data: { status: "CANCELLED", cancelledAt: new Date(), cancelledBy: "CLIENT" },
     });
 
     if (result.count !== 1) {
@@ -294,7 +311,7 @@ export const OrdersService = {
 
     const result = await prisma.order.updateMany({
       where: { id: orderId, driverId: driver.id, status: order.status },
-      data: { status: "CANCELLED" },
+      data: { status: "CANCELLED", cancelledAt: new Date(), cancelledBy: "DRIVER" },
     });
 
     if (result.count !== 1) {
@@ -325,33 +342,7 @@ export const OrdersService = {
     const candidates = withDistance.slice(0, 3).map((d) => d.order);
 
     for (const candidate of candidates) {
-      const assignedOrder = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "Driver" WHERE id = ${driverId} FOR UPDATE`;
-
-        const driver = await tx.driver.findUnique({
-          where: { id: driverId },
-          include: {
-            orders: {
-              where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
-            },
-          },
-        });
-
-        if (!driver || !driver.isOnline || driver.orders.length > 0) {
-          return null;
-        }
-
-        const result = await tx.order.updateMany({
-          where: { id: candidate.id, status: "NEW", driverId: null },
-          data: { driverId, status: "ACCEPTED" },
-        });
-
-        if (result.count === 1) {
-          return tx.order.findUnique({ where: { id: candidate.id } });
-        }
-
-        return null;
-      });
+      const assignedOrder = await tryAssignOrderToDriver(candidate.id, driverId);
 
       if (assignedOrder) {
         await notifyDriverOfNewOrder(driverId, assignedOrder);

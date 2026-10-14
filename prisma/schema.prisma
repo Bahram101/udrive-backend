@@ -55,6 +55,10 @@ model Order {
   toLat       Float?
   toLng       Float?
 
+  completedAt DateTime?
+  cancelledAt DateTime?
+  cancelledBy CancelledBy?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -102,4 +106,9 @@ enum OrderStatus {
   STARTED
   COMPLETED
   CANCELLED
+}
+
+enum CancelledBy {
+  CLIENT
+  DRIVER
 }

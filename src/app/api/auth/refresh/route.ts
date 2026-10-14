@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
   try {
     const { refreshToken } = refreshSchema.parse(await request.json());
 
-    return Response.json(AuthService.refreshAccessToken(refreshToken));
+    return Response.json(await AuthService.refreshAccessToken(refreshToken));
   } catch (error) {
     return handleApiError(error);
   }

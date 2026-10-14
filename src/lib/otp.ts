@@ -37,6 +37,11 @@ export async function checkOtpRateLimit(phone: string) {
 export async function createOtpCode(phone: string): Promise<string> {
   const now = new Date();
 
+  // Housekeeping: rows older than the 1h rate-limit window are no longer needed.
+  await prisma.otpCode.deleteMany({
+    where: { createdAt: { lt: new Date(now.getTime() - 3600 * 1000) } },
+  });
+
   await prisma.otpCode.updateMany({
     where: { phone, expiresAt: { gt: now } },
     data: { expiresAt: now },

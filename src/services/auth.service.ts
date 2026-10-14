@@ -188,7 +188,7 @@ export const AuthService = {
     return issueTokens(updated);
   },
 
-  refreshAccessToken(refreshToken: string): { accessToken: string } {
+  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string }> {
     let payload: JwtPayload;
     try {
       payload = verifyRefreshToken(refreshToken);
@@ -196,7 +196,18 @@ export const AuthService = {
       throw new AppError(401, "Invalid or expired refresh token");
     }
 
-    const { userId, phone, role } = payload;
-    return { accessToken: signAccessToken({ userId, phone, role }) };
+    // Role and existence come from the DB, not the 30-day-old token.
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true, phone: true, role: true },
+    });
+
+    if (!user) {
+      throw new AppError(401, "Invalid or expired refresh token");
+    }
+
+    return {
+      accessToken: signAccessToken({ userId: user.id, phone: user.phone, role: user.role }),
+    };
   },
 };
