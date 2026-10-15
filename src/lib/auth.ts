@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { JwtPayload, verifyAccessToken } from "./jwt";
+import { prisma } from "./prisma";
 
 type RouteContext<T> = { params: Promise<T> };
 
@@ -34,4 +35,20 @@ export function withAuth<T = unknown>(handler: AuthedHandler<T>) {
 
     return handler(request, user, context);
   };
+}
+
+// Role is checked in the DB, not trusted from the token.
+export function withAdmin<T = unknown>(handler: AuthedHandler<T>) {
+  return withAuth<T>(async (request, user, context) => {
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { role: true },
+    });
+
+    if (dbUser?.role !== "ADMIN") {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    return handler(request, user, context);
+  });
 }

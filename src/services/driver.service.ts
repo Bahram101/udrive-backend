@@ -41,6 +41,7 @@ export const DriverService = {
       where: { userId },
       data: {
         isOnline,
+        lastSeenAt: new Date(),
         ...(lat !== undefined && { lat }),
         ...(lng !== undefined && { lng }),
       },
@@ -79,7 +80,7 @@ export const DriverService = {
 
     return prisma.driver.update({
       where: { userId },
-      data: { lat, lng },
+      data: { lat, lng, lastSeenAt: new Date() },
     });
   },
 };

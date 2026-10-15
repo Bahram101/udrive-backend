@@ -33,6 +33,7 @@ model Driver {
   rating    Float   @default(5.0)
   lat       Float?
   lng       Float?
+  lastSeenAt DateTime?
   pushToken String?
 
   createdAt DateTime @default(now())
@@ -68,6 +69,7 @@ model Order {
   @@index([status])
   @@index([driverId])
   @@index([clientId])
+  @@index([createdAt])
 }
 
 model TelegramLink {

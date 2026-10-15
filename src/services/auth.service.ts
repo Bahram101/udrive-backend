@@ -1,8 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { createOtpCode, checkOtpRateLimit } from "@/lib/otp";
-import { OTP_MAX_ATTEMPTS } from "@/lib/constants";
-import { JwtPayload, signAccessToken, signRefreshToken, verifyRefreshToken } from "@/lib/jwt";
+import { FINISHED_ORDER_STATUSES, OTP_MAX_ATTEMPTS } from "@/lib/constants";
+import {
+  JwtPayload,
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+} from "@/lib/jwt";
 import { TelegramService } from "@/services/telegram.service";
 import { Role } from "@/generated/prisma/client";
 
@@ -60,7 +65,11 @@ function issueTokens(user: {
   rating: number | null;
   driver: { id: string } | null;
 }): AuthResult {
-  const payload: JwtPayload = { userId: user.id, phone: user.phone, role: user.role };
+  const payload: JwtPayload = {
+    userId: user.id,
+    phone: user.phone,
+    role: user.role,
+  };
 
   return {
     accessToken: signAccessToken(payload),
@@ -75,13 +84,21 @@ export const AuthService = {
     const chatId = await TelegramService.getChatIdForPhone(phone);
     if (chatId) {
       const code = await createOtpCode(phone);
-      await TelegramService.sendMessage(chatId, `Код подтверждения uDrive: ${code}`);
+      await TelegramService.sendMessage(
+        chatId,
+        `Код подтверждения uDrive: ${code}`,
+      );
     }
 
     return { needsTelegramLink: !chatId };
   },
 
-  async verifyOtp({ phone, code, name, role }: VerifyOtpInput): Promise<AuthResult> {
+  async verifyOtp({
+    phone,
+    code,
+    name,
+    role,
+  }: VerifyOtpInput): Promise<AuthResult> {
     const now = new Date();
     const otpRecord = await prisma.otpCode.findFirst({
       where: { phone, expiresAt: { gt: now } },
@@ -94,7 +111,11 @@ export const AuthService = {
 
     // Spend one attempt before comparing: atomic, so parallel guesses can't exceed the limit.
     const { count: attemptTaken } = await prisma.otpCode.updateMany({
-      where: { id: otpRecord.id, attempts: { lt: OTP_MAX_ATTEMPTS }, expiresAt: { gt: now } },
+      where: {
+        id: otpRecord.id,
+        attempts: { lt: OTP_MAX_ATTEMPTS },
+        expiresAt: { gt: now },
+      },
       data: { attempts: { increment: 1 } },
     });
 
@@ -108,13 +129,18 @@ export const AuthService = {
 
     // Single use: only one request can consume the code.
     const consumeOtp = async () => {
-      const { count } = await prisma.otpCode.deleteMany({ where: { id: otpRecord.id } });
+      const { count } = await prisma.otpCode.deleteMany({
+        where: { id: otpRecord.id },
+      });
       if (count !== 1) {
         throw new AppError(401, "Invalid OTP code");
       }
     };
 
-    const existingUser = await prisma.user.findUnique({ where: { phone }, include: { driver: true } });
+    const existingUser = await prisma.user.findUnique({
+      where: { phone },
+      include: { driver: true },
+    });
 
     if (existingUser) {
       await consumeOtp();
@@ -123,7 +149,9 @@ export const AuthService = {
 
     if (!name || !role) {
       // Code stays valid: the client resends it together with name and role.
-      throw new AppError(422, "Name and role are required for new users", { isNewUser: true });
+      throw new AppError(422, "Name and role are required for new users", {
+        isNewUser: true,
+      });
     }
 
     await consumeOtp();
@@ -151,13 +179,17 @@ export const AuthService = {
       throw new AppError(404, "User not found");
     }
 
-    if (user.role !== "CLIENT" && user.role !== "DRIVER") {
+    if (
+      user.role !== "CLIENT" &&
+      user.role !== "DRIVER" &&
+      user.role !== "ADMIN"
+    ) {
       throw new AppError(400, "This role cannot be switched");
     }
 
     const activeOrder = await prisma.order.findFirst({
       where: {
-        status: { notIn: ["COMPLETED", "CANCELLED"] },
+        status: { notIn: FINISHED_ORDER_STATUSES },
         OR: [{ clientId: userId }, { driverId: user.driver?.id }],
       },
     });
@@ -188,7 +220,9 @@ export const AuthService = {
     return issueTokens(updated);
   },
 
-  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string }> {
+  async refreshAccessToken(
+    refreshToken: string,
+  ): Promise<{ accessToken: string }> {
     let payload: JwtPayload;
     try {
       payload = verifyRefreshToken(refreshToken);
@@ -207,7 +241,11 @@ export const AuthService = {
     }
 
     return {
-      accessToken: signAccessToken({ userId: user.id, phone: user.phone, role: user.role }),
+      accessToken: signAccessToken({
+        userId: user.id,
+        phone: user.phone,
+        role: user.role,
+      }),
     };
   },
 };

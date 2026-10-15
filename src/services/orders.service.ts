@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { distanceKm } from "@/lib/geo";
+import { FINISHED_ORDER_STATUSES } from "@/lib/constants";
 import { sendPushNotification } from "@/lib/pushNotifications";
 import { Order, OrderStatus } from "@/generated/prisma/client";
 
@@ -27,7 +28,7 @@ async function findNearestOnlineDrivers(
       lat: { not: null },
       lng: { not: null },
       orders: {
-        none: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+        none: { status: { notIn: FINISHED_ORDER_STATUSES } },
       },
     },
   });
@@ -117,7 +118,7 @@ async function tryAssignOrderToDriver(
       where: { id: driverId },
       include: {
         orders: {
-          where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
+          where: { status: { notIn: FINISHED_ORDER_STATUSES } },
         },
       },
     });
@@ -154,7 +155,7 @@ export const OrdersService = {
       throw new AppError(404, "User not found");
     }
 
-    if (client.role !== "CLIENT") {
+    if (client.role !== "CLIENT" && client.role !== "ADMIN") {
       throw new AppError(403, "Only clients can create orders");
     }
 
@@ -163,7 +164,7 @@ export const OrdersService = {
       await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${clientId} FOR UPDATE`;
 
       const activeOrder = await tx.order.findFirst({
-        where: { clientId, status: { notIn: ["COMPLETED", "CANCELLED"] } },
+        where: { clientId, status: { notIn: FINISHED_ORDER_STATUSES } },
         select: { id: true },
       });
 
@@ -219,7 +220,7 @@ export const OrdersService = {
     const currentOrder = await prisma.order.findFirst({
       where: {
         clientId,
-        status: { notIn: ["COMPLETED", "CANCELLED"] },
+        status: { notIn: FINISHED_ORDER_STATUSES },
       },
       orderBy: { createdAt: "desc" },
       include: {
@@ -253,7 +254,7 @@ export const OrdersService = {
     return prisma.order.findFirst({
       where: {
         driverId: driver.id,
-        status: { notIn: ["COMPLETED", "CANCELLED"] },
+        status: { notIn: FINISHED_ORDER_STATUSES },
       },
       orderBy: { createdAt: "desc" },
     });
