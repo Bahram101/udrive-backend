@@ -1,9 +1,74 @@
+import { Prisma, type OrderStatus } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { FINISHED_ORDER_STATUSES } from "@/lib/constants";
-import { daysBetween, startOfAlmatyDay, startOfAlmatyWeek } from "@/lib/time";
+import {
+  almatyDayStartFromDateString,
+  daysBetween,
+  startOfAlmatyDay,
+  startOfAlmatyWeek,
+} from "@/lib/time";
+import type { AdminOrdersQuery } from "@/schemas/admin.schema";
 
 const RECENT_ORDERS_LIMIT = 6;
 const DAYS_IN_WEEK = 7;
+
+const adminOrderSelect = {
+  id: true,
+  status: true,
+  fromAddress: true,
+  toAddress: true,
+  price: true,
+  createdAt: true,
+  completedAt: true,
+  cancelledAt: true,
+  cancelledBy: true,
+  client: {
+    select: {
+      name: true,
+      phone: true,
+    },
+  },
+  driver: {
+    select: {
+      carModel: true,
+      carNumber: true,
+      user: {
+        select: {
+          name: true,
+          phone: true,
+        },
+      },
+    },
+  },
+} as const;
+
+type AdminOrderRecord = Prisma.OrderGetPayload<{ select: typeof adminOrderSelect }>;
+
+function toAdminOrder(order: AdminOrderRecord) {
+  return {
+    id: order.id,
+    status: order.status,
+    fromAddress: order.fromAddress,
+    toAddress: order.toAddress,
+    price: order.price,
+    createdAt: order.createdAt,
+    completedAt: order.completedAt,
+    cancelledAt: order.cancelledAt,
+    cancelledBy: order.cancelledBy,
+    client: {
+      name: order.client.name,
+      phone: order.client.phone,
+    },
+    driver: order.driver
+      ? {
+          name: order.driver.user.name,
+          phone: order.driver.user.phone,
+          carModel: order.driver.carModel,
+          carNumber: order.driver.carNumber,
+        }
+      : null,
+  };
+}
 
 export const AdminService = {
   async getDashboard() {
@@ -58,17 +123,7 @@ export const AdminService = {
       prisma.order.findMany({
         orderBy: { createdAt: "desc" },
         take: RECENT_ORDERS_LIMIT,
-        select: {
-          id: true,
-          status: true,
-          fromAddress: true,
-          toAddress: true,
-          price: true,
-          createdAt: true,
-          cancelledBy: true,
-          client: { select: { name: true } },
-          driver: { select: { carModel: true, carNumber: true, user: { select: { name: true } } } },
-        },
+        select: adminOrderSelect,
       }),
       prisma.order.findMany({
         where: activeOrder,
@@ -99,15 +154,7 @@ export const AdminService = {
         revenueToday: revenueToday._sum.price ?? 0,
         revenueYesterday: revenueYesterday._sum.price ?? 0,
       },
-      recentOrders: recentOrders.map(({ client, driver, ...order }) => ({
-        ...order,
-        clientName: client.name,
-        driver: driver && {
-          name: driver.user.name,
-          carModel: driver.carModel,
-          carNumber: driver.carNumber,
-        },
-      })),
+      recentOrders: recentOrders.map(toAdminOrder),
       onlineDrivers: onlineDrivers.map(({ user, orders, ...driver }) => ({
         ...driver,
         name: user.name,
@@ -119,6 +166,83 @@ export const AdminService = {
         lng: fromLng,
       })),
       weeklyOrders,
+    };
+  },
+
+  async getOrders(query: AdminOrdersQuery) {
+    const skip = (query.page - 1) * query.pageSize;
+    const take = query.pageSize;
+
+    const baseWhere: Prisma.OrderWhereInput = {};
+
+    if (query.from || query.to) {
+      const createdAtFilter: Prisma.DateTimeFilter = {};
+      if (query.from) {
+        createdAtFilter.gte = almatyDayStartFromDateString(query.from);
+      }
+      if (query.to) {
+        createdAtFilter.lt = startOfAlmatyDay(almatyDayStartFromDateString(query.to), 1);
+      }
+      baseWhere.createdAt = createdAtFilter;
+    }
+
+    if (query.q) {
+      const idQuery = query.q.replace(/^#+/, "").toLowerCase();
+      baseWhere.OR = [
+        { client: { name: { contains: query.q, mode: "insensitive" } } },
+        { client: { phone: { contains: query.q } } },
+        { driver: { user: { name: { contains: query.q, mode: "insensitive" } } } },
+        { driver: { carNumber: { contains: query.q, mode: "insensitive" } } },
+        { fromAddress: { contains: query.q, mode: "insensitive" } },
+        { toAddress: { contains: query.q, mode: "insensitive" } },
+        // Empty prefix (q = "#") would match every order.
+        ...(idQuery ? [{ id: { startsWith: idQuery } }] : []),
+      ];
+    }
+
+    const where: Prisma.OrderWhereInput = { ...baseWhere };
+
+    if (query.status === "ACTIVE") {
+      where.status = { notIn: FINISHED_ORDER_STATUSES };
+    } else if (query.status) {
+      where.status = query.status;
+    }
+
+    const [orders, total, statusGroups] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        select: adminOrderSelect,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take,
+      }),
+      prisma.order.count({ where }),
+      prisma.order.groupBy({
+        by: ["status"],
+        where: baseWhere,
+        _count: { _all: true },
+      }),
+    ]);
+
+    const statusCounts: Record<OrderStatus, number> = {
+      NEW: 0,
+      ACCEPTED: 0,
+      ARRIVED: 0,
+      STARTED: 0,
+      COMPLETED: 0,
+      CANCELLED: 0,
+    };
+
+    for (const group of statusGroups) {
+      statusCounts[group.status] = group._count._all;
+    }
+
+    return {
+      items: orders.map(toAdminOrder),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      statusCounts,
     };
   },
 };

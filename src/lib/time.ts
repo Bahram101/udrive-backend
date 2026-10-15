@@ -20,3 +20,7 @@ export function startOfAlmatyWeek(date: Date): Date {
 export function daysBetween(from: Date, to: Date): number {
   return Math.floor((to.getTime() - from.getTime()) / DAY_MS);
 }
+
+export function almatyDayStartFromDateString(value: string): Date {
+  return new Date(Date.parse(`${value}T00:00:00Z`) - ALMATY_OFFSET_MS);
+}
