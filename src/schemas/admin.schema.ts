@@ -43,3 +43,11 @@ export const adminClientsQuerySchema = paginationSchema.extend({
 });
 
 export type AdminClientsQuery = z.infer<typeof adminClientsQuerySchema>;
+
+export const adminPayoutsQuerySchema = paginationSchema.extend({
+  from: dateString.optional(),
+  to: dateString.optional(),
+  q: searchQuery,
+});
+
+export type AdminPayoutsQuery = z.infer<typeof adminPayoutsQuerySchema>;

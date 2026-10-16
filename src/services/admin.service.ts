@@ -1,10 +1,12 @@
 import { Prisma, type OrderStatus } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { FINISHED_ORDER_STATUSES } from "@/lib/constants";
+import { FINISHED_ORDER_STATUSES, PLATFORM_COMMISSION_RATE } from "@/lib/constants";
 import {
-  almatyDayStartFromDateString,
+  almatyDateRangeToUtc,
   daysBetween,
+  formatAlmatyDate,
   startOfAlmatyDay,
+  startOfAlmatyMonth,
   startOfAlmatyWeek,
 } from "@/lib/time";
 import type {
@@ -13,7 +15,17 @@ import type {
   AdminDriversQuery,
   AdminDriverStatus,
   AdminOrdersQuery,
+  AdminPayoutsQuery,
 } from "@/schemas/admin.schema";
+
+function calculateCommission(
+  earnings: number,
+  rate = PLATFORM_COMMISSION_RATE,
+): { commission: number; net: number } {
+  const commission = Math.round(earnings * rate);
+  const net = earnings - commission;
+  return { commission, net };
+}
 
 const RECENT_ORDERS_LIMIT = 6;
 const DAYS_IN_WEEK = 7;
@@ -285,15 +297,9 @@ export const AdminService = {
 
     const baseWhere: Prisma.OrderWhereInput = {};
 
-    if (query.from || query.to) {
-      const createdAtFilter: Prisma.DateTimeFilter = {};
-      if (query.from) {
-        createdAtFilter.gte = almatyDayStartFromDateString(query.from);
-      }
-      if (query.to) {
-        createdAtFilter.lt = startOfAlmatyDay(almatyDayStartFromDateString(query.to), 1);
-      }
-      baseWhere.createdAt = createdAtFilter;
+    const createdAtRange = almatyDateRangeToUtc(query.from, query.to);
+    if (createdAtRange) {
+      baseWhere.createdAt = createdAtRange;
     }
 
     if (query.q) {
@@ -528,6 +534,122 @@ export const AdminService = {
         ACTIVE: activeCount,
         NO_ORDERS: noOrdersCount,
       },
+    };
+  },
+
+  async getPayouts(query: AdminPayoutsQuery) {
+    const skip = (query.page - 1) * query.pageSize;
+    const take = query.pageSize;
+
+    const now = new Date();
+    const from = query.from ?? formatAlmatyDate(startOfAlmatyMonth(now));
+    const to = query.to ?? formatAlmatyDate(now);
+    const completedAtRange = almatyDateRangeToUtc(from, to);
+
+    const where: Prisma.OrderWhereInput = {
+      status: "COMPLETED",
+      driverId: { not: null },
+      ...(completedAtRange && { completedAt: completedAtRange }),
+    };
+
+    if (query.q) {
+      where.driver = {
+        OR: [
+          { user: { name: { contains: query.q, mode: "insensitive" } } },
+          { user: { phone: { contains: query.q } } },
+          { carNumber: { contains: query.q, mode: "insensitive" } },
+        ],
+      };
+    }
+
+    const [allGroups, pagedGroups] = await Promise.all([
+      prisma.order.groupBy({
+        by: ["driverId"],
+        where,
+        _sum: { price: true },
+        _count: { _all: true },
+      }),
+      prisma.order.groupBy({
+        by: ["driverId"],
+        where,
+        _sum: { price: true },
+        _count: { _all: true },
+        _max: { completedAt: true },
+        orderBy: { _sum: { price: "desc" } },
+        skip,
+        take,
+      }),
+    ]);
+
+    const total = allGroups.length;
+    const totalEarnings = allGroups.reduce((acc, g) => acc + (g._sum.price ?? 0), 0);
+    const completedOrders = allGroups.reduce((acc, g) => acc + g._count._all, 0);
+    const { commission: totalCommission, net: totalNet } =
+      calculateCommission(totalEarnings, PLATFORM_COMMISSION_RATE);
+
+    const driverIds = pagedGroups
+      .map((g) => g.driverId)
+      .filter((id): id is string => Boolean(id));
+
+    const drivers =
+      driverIds.length > 0
+        ? await prisma.driver.findMany({
+            where: { id: { in: driverIds } },
+            select: {
+              id: true,
+              carModel: true,
+              carNumber: true,
+              user: {
+                select: {
+                  name: true,
+                  phone: true,
+                },
+              },
+            },
+          })
+        : [];
+
+    const driversById = new Map(drivers.map((d) => [d.id, d]));
+
+    const items = pagedGroups.map((group) => {
+      const driver = group.driverId ? driversById.get(group.driverId) : undefined;
+      const earnings = group._sum.price ?? 0;
+      const count = group._count._all;
+      const { commission, net } = calculateCommission(earnings, PLATFORM_COMMISSION_RATE);
+      const averageCheck = count > 0 ? Math.round(earnings / count) : 0;
+      const lastCompletedAt = group._max.completedAt
+        ? group._max.completedAt.toISOString()
+        : null;
+
+      return {
+        driverId: group.driverId ?? "",
+        name: driver?.user.name ?? "—",
+        phone: driver?.user.phone ?? "—",
+        carModel: driver?.carModel ?? null,
+        carNumber: driver?.carNumber ?? null,
+        completedOrders: count,
+        earnings,
+        commission,
+        net,
+        averageCheck,
+        lastCompletedAt,
+      };
+    });
+
+    return {
+      period: { from, to },
+      commissionRate: PLATFORM_COMMISSION_RATE,
+      summary: {
+        totalEarnings,
+        completedOrders,
+        drivers: total,
+        commission: totalCommission,
+        net: totalNet,
+      },
+      items,
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
     };
   },
 };
