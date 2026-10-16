@@ -8,6 +8,8 @@ import {
   startOfAlmatyWeek,
 } from "@/lib/time";
 import type {
+  AdminClientsQuery,
+  AdminClientStatus,
   AdminDriversQuery,
   AdminDriverStatus,
   AdminOrdersQuery,
@@ -97,14 +99,35 @@ const adminDriverSelect = {
 
 type AdminDriverRecord = Prisma.DriverGetPayload<{ select: typeof adminDriverSelect }>;
 
-interface DriverOrderStats {
-  completedOrders: number;
-  cancelledOrders: number;
+interface OrderStats {
+  total: number;
+  completed: number;
+  cancelled: number;
+}
+
+function buildOrderStatsMap<K extends "driverId" | "clientId">(
+  rows: Array<{ status: OrderStatus; _count: { _all: number } } & Record<K, string | null>>,
+  key: K,
+): Map<string, OrderStats> {
+  const map = new Map<string, OrderStats>();
+  for (const row of rows) {
+    const id = row[key];
+    if (!id) continue;
+    const stats = map.get(id) ?? { total: 0, completed: 0, cancelled: 0 };
+    stats.total += row._count._all;
+    if (row.status === "COMPLETED") {
+      stats.completed += row._count._all;
+    } else if (row.status === "CANCELLED") {
+      stats.cancelled += row._count._all;
+    }
+    map.set(id, stats);
+  }
+  return map;
 }
 
 function toAdminDriver(
   driver: AdminDriverRecord,
-  stats: DriverOrderStats = { completedOrders: 0, cancelledOrders: 0 },
+  stats: OrderStats = { total: 0, completed: 0, cancelled: 0 },
 ) {
   return {
     id: driver.id,
@@ -117,8 +140,43 @@ function toAdminDriver(
     isBusy: driver.orders.length > 0,
     lastSeenAt: driver.lastSeenAt,
     createdAt: driver.createdAt,
-    completedOrders: stats.completedOrders,
-    cancelledOrders: stats.cancelledOrders,
+    completedOrders: stats.completed,
+    cancelledOrders: stats.cancelled,
+  };
+}
+
+const adminClientSelect = {
+  id: true,
+  name: true,
+  phone: true,
+  rating: true,
+  createdAt: true,
+  orders: {
+    where: { status: { notIn: FINISHED_ORDER_STATUSES } },
+    select: { status: true },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+  },
+} as const;
+
+type AdminClientRecord = Prisma.UserGetPayload<{ select: typeof adminClientSelect }>;
+
+function toAdminClient(
+  client: AdminClientRecord,
+  stats: OrderStats = { total: 0, completed: 0, cancelled: 0 },
+  lastOrderAt?: string | null,
+) {
+  return {
+    id: client.id,
+    name: client.name,
+    phone: client.phone,
+    rating: client.rating,
+    createdAt: client.createdAt,
+    totalOrders: stats.total,
+    completedOrders: stats.completed,
+    cancelledOrders: stats.cancelled,
+    lastOrderAt: lastOrderAt ?? null,
+    activeOrderStatus: client.orders[0]?.status ?? null,
   };
 }
 
@@ -363,21 +421,7 @@ export const AdminService = {
           })
         : [];
 
-    const orderStatsByDriver = new Map<string, DriverOrderStats>();
-
-    for (const row of orderCounts) {
-      if (!row.driverId) continue;
-      const stats = orderStatsByDriver.get(row.driverId) ?? {
-        completedOrders: 0,
-        cancelledOrders: 0,
-      };
-      if (row.status === "COMPLETED") {
-        stats.completedOrders = row._count._all;
-      } else if (row.status === "CANCELLED") {
-        stats.cancelledOrders = row._count._all;
-      }
-      orderStatsByDriver.set(row.driverId, stats);
-    }
+    const orderStatsByDriver = buildOrderStatsMap(orderCounts, "driverId");
 
     return {
       items: drivers.map((driver) =>
@@ -391,6 +435,98 @@ export const AdminService = {
         FREE: freeCount,
         BUSY: busyCount,
         OFFLINE: offlineCount,
+      },
+    };
+  },
+
+  async getClients(query: AdminClientsQuery) {
+    const skip = (query.page - 1) * query.pageSize;
+    const take = query.pageSize;
+
+    const baseWhere: Prisma.UserWhereInput = {
+      role: "CLIENT",
+    };
+
+    if (query.q) {
+      baseWhere.OR = [
+        { name: { contains: query.q, mode: "insensitive" } },
+        { phone: { contains: query.q } },
+      ];
+    }
+
+    const activeOrderWhere: Prisma.OrderWhereInput = {
+      status: { notIn: FINISHED_ORDER_STATUSES },
+    };
+
+    const statusConditions: Record<AdminClientStatus, Prisma.UserWhereInput> = {
+      ACTIVE: { orders: { some: activeOrderWhere } },
+      NO_ORDERS: { orders: { none: {} } },
+    };
+
+    const where: Prisma.UserWhereInput = query.status
+      ? { ...baseWhere, ...statusConditions[query.status] }
+      : { ...baseWhere };
+
+    const [clients, allCount, activeCount, noOrdersCount] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: adminClientSelect,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take,
+      }),
+      prisma.user.count({ where: baseWhere }),
+      prisma.user.count({ where: { ...baseWhere, ...statusConditions.ACTIVE } }),
+      prisma.user.count({ where: { ...baseWhere, ...statusConditions.NO_ORDERS } }),
+    ]);
+
+    const total = query.status
+      ? query.status === "ACTIVE"
+        ? activeCount
+        : noOrdersCount
+      : allCount;
+
+    const clientIds = clients.map((client) => client.id);
+
+    const [orderCounts, lastOrders] =
+      clientIds.length > 0
+        ? await Promise.all([
+            prisma.order.groupBy({
+              by: ["clientId", "status"],
+              where: { clientId: { in: clientIds } },
+              _count: { _all: true },
+            }),
+            prisma.order.groupBy({
+              by: ["clientId"],
+              where: { clientId: { in: clientIds } },
+              _max: { createdAt: true },
+            }),
+          ])
+        : [[], []];
+
+    const orderStatsByClient = buildOrderStatsMap(orderCounts, "clientId");
+    const lastOrderAtByClient = new Map(
+      lastOrders.map((row) => [
+        row.clientId,
+        row._max.createdAt ? row._max.createdAt.toISOString() : null,
+      ]),
+    );
+
+    return {
+      items: clients.map((client) =>
+        toAdminClient(
+          client,
+          orderStatsByClient.get(client.id),
+          lastOrderAtByClient.get(client.id),
+        ),
+      ),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      statusCounts: {
+        ALL: allCount,
+        ACTIVE: activeCount,
+        NO_ORDERS: noOrdersCount,
       },
     };
   },

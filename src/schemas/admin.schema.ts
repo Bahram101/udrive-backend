@@ -34,3 +34,12 @@ export const adminDriversQuerySchema = paginationSchema.extend({
 
 export type AdminDriversQuery = z.infer<typeof adminDriversQuerySchema>;
 
+export const ADMIN_CLIENT_STATUSES = ["ACTIVE", "NO_ORDERS"] as const;
+export type AdminClientStatus = (typeof ADMIN_CLIENT_STATUSES)[number];
+
+export const adminClientsQuerySchema = paginationSchema.extend({
+  status: z.enum(ADMIN_CLIENT_STATUSES).optional(),
+  q: searchQuery,
+});
+
+export type AdminClientsQuery = z.infer<typeof adminClientsQuerySchema>;
