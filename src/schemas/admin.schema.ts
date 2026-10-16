@@ -6,15 +6,31 @@ const dateString = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Дата в формате ГГГГ-ММ-ДД")
   .refine((value) => !Number.isNaN(Date.parse(value)), "Некорректная дата");
 
-export const adminOrdersQuerySchema = z.object({
+const paginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const searchQuery = z.string().trim().min(1).max(100).optional();
+
+export const adminOrdersQuerySchema = paginationSchema.extend({
   status: z
     .enum(["NEW", "ACCEPTED", "ARRIVED", "STARTED", "COMPLETED", "CANCELLED", "ACTIVE"])
     .optional(),
   from: dateString.optional(),
   to: dateString.optional(),
-  q: z.string().trim().min(1).max(100).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  q: searchQuery,
 });
 
 export type AdminOrdersQuery = z.infer<typeof adminOrdersQuerySchema>;
+
+export const ADMIN_DRIVER_STATUSES = ["ONLINE", "FREE", "BUSY", "OFFLINE"] as const;
+export type AdminDriverStatus = (typeof ADMIN_DRIVER_STATUSES)[number];
+
+export const adminDriversQuerySchema = paginationSchema.extend({
+  status: z.enum(ADMIN_DRIVER_STATUSES).optional(),
+  q: searchQuery,
+});
+
+export type AdminDriversQuery = z.infer<typeof adminDriversQuerySchema>;
+

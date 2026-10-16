@@ -8,6 +8,13 @@ API сервиса такси uDrive для небольшого города (�
 
 `D:\projects\uDrive\` содержит три отдельных репозитория: `uDrive-backend` (этот), `uDrive-web` (сайт + админка, см. его `CLAUDE.md`), `uDrive-mobile` (Expo-приложение клиентов и водителей).
 
+## Локальный запуск
+
+- Node.js 24 (`nvm use 24.18.0`; на Node 16 не работают ESLint, `--env-file` и Next 16).
+- Порт **3001** (`npm run dev` = `next dev -p 3001`); web-админка — 3002. Порт 3000 не использовать — его занимают другие проекты.
+- `npm run start` порт не задаёт намеренно: в Docker контейнер слушает 3000 (`docker-compose.yml`: `3001:3000`).
+- Telegram-бот локально: `ngrok http 3001`, затем `npm run telegram:webhook`. Мобильное приложение (`EXPO_PUBLIC_API_URL`) тоже должно смотреть на 3001 или ngrok.
+
 ## Стек
 
 - Next.js 16 (App Router, только API Routes), TypeScript (strict)

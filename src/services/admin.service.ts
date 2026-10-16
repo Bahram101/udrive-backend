@@ -7,7 +7,11 @@ import {
   startOfAlmatyDay,
   startOfAlmatyWeek,
 } from "@/lib/time";
-import type { AdminOrdersQuery } from "@/schemas/admin.schema";
+import type {
+  AdminDriversQuery,
+  AdminDriverStatus,
+  AdminOrdersQuery,
+} from "@/schemas/admin.schema";
 
 const RECENT_ORDERS_LIMIT = 6;
 const DAYS_IN_WEEK = 7;
@@ -67,6 +71,54 @@ function toAdminOrder(order: AdminOrderRecord) {
           carNumber: order.driver.carNumber,
         }
       : null,
+  };
+}
+
+const adminDriverSelect = {
+  id: true,
+  carModel: true,
+  carNumber: true,
+  rating: true,
+  isOnline: true,
+  lastSeenAt: true,
+  createdAt: true,
+  user: {
+    select: {
+      name: true,
+      phone: true,
+    },
+  },
+  orders: {
+    where: { status: { notIn: FINISHED_ORDER_STATUSES } },
+    select: { id: true },
+    take: 1,
+  },
+} as const;
+
+type AdminDriverRecord = Prisma.DriverGetPayload<{ select: typeof adminDriverSelect }>;
+
+interface DriverOrderStats {
+  completedOrders: number;
+  cancelledOrders: number;
+}
+
+function toAdminDriver(
+  driver: AdminDriverRecord,
+  stats: DriverOrderStats = { completedOrders: 0, cancelledOrders: 0 },
+) {
+  return {
+    id: driver.id,
+    name: driver.user.name,
+    phone: driver.user.phone,
+    carModel: driver.carModel,
+    carNumber: driver.carNumber,
+    rating: driver.rating,
+    isOnline: driver.isOnline,
+    isBusy: driver.orders.length > 0,
+    lastSeenAt: driver.lastSeenAt,
+    createdAt: driver.createdAt,
+    completedOrders: stats.completedOrders,
+    cancelledOrders: stats.cancelledOrders,
   };
 }
 
@@ -243,6 +295,103 @@ export const AdminService = {
       page: query.page,
       pageSize: query.pageSize,
       statusCounts,
+    };
+  },
+
+  async getDrivers(query: AdminDriversQuery) {
+    const skip = (query.page - 1) * query.pageSize;
+    const take = query.pageSize;
+
+    const baseWhere: Prisma.DriverWhereInput = {
+      user: { role: "DRIVER" },
+    };
+
+    if (query.q) {
+      baseWhere.OR = [
+        { user: { name: { contains: query.q, mode: "insensitive" } } },
+        { user: { phone: { contains: query.q } } },
+        { carNumber: { contains: query.q, mode: "insensitive" } },
+        { carModel: { contains: query.q, mode: "insensitive" } },
+      ];
+    }
+
+    const activeOrderWhere: Prisma.OrderWhereInput = {
+      status: { notIn: FINISHED_ORDER_STATUSES },
+    };
+
+    const statusConditions: Record<AdminDriverStatus, Prisma.DriverWhereInput> = {
+      ONLINE: { isOnline: true },
+      FREE: { isOnline: true, orders: { none: activeOrderWhere } },
+      BUSY: { orders: { some: activeOrderWhere } },
+      OFFLINE: { isOnline: false },
+    };
+
+    const where: Prisma.DriverWhereInput = query.status
+      ? { ...baseWhere, ...statusConditions[query.status] }
+      : { ...baseWhere };
+
+    const [drivers, total, onlineCount, freeCount, busyCount, offlineCount] =
+      await Promise.all([
+        prisma.driver.findMany({
+          where,
+          select: adminDriverSelect,
+          orderBy: [
+            { isOnline: "desc" },
+            { rating: "desc" },
+            { createdAt: "desc" },
+          ],
+          skip,
+          take,
+        }),
+        prisma.driver.count({ where }),
+        prisma.driver.count({ where: { ...baseWhere, ...statusConditions.ONLINE } }),
+        prisma.driver.count({ where: { ...baseWhere, ...statusConditions.FREE } }),
+        prisma.driver.count({ where: { ...baseWhere, ...statusConditions.BUSY } }),
+        prisma.driver.count({ where: { ...baseWhere, ...statusConditions.OFFLINE } }),
+      ]);
+
+    const driverIds = drivers.map((driver) => driver.id);
+    const orderCounts =
+      driverIds.length > 0
+        ? await prisma.order.groupBy({
+            by: ["driverId", "status"],
+            where: {
+              driverId: { in: driverIds },
+              status: { in: ["COMPLETED", "CANCELLED"] },
+            },
+            _count: { _all: true },
+          })
+        : [];
+
+    const orderStatsByDriver = new Map<string, DriverOrderStats>();
+
+    for (const row of orderCounts) {
+      if (!row.driverId) continue;
+      const stats = orderStatsByDriver.get(row.driverId) ?? {
+        completedOrders: 0,
+        cancelledOrders: 0,
+      };
+      if (row.status === "COMPLETED") {
+        stats.completedOrders = row._count._all;
+      } else if (row.status === "CANCELLED") {
+        stats.cancelledOrders = row._count._all;
+      }
+      orderStatsByDriver.set(row.driverId, stats);
+    }
+
+    return {
+      items: drivers.map((driver) =>
+        toAdminDriver(driver, orderStatsByDriver.get(driver.id)),
+      ),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+      statusCounts: {
+        ONLINE: onlineCount,
+        FREE: freeCount,
+        BUSY: busyCount,
+        OFFLINE: offlineCount,
+      },
     };
   },
 };
