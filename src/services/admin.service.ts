@@ -30,6 +30,8 @@ function calculateCommission(
 const RECENT_ORDERS_LIMIT = 6;
 const DAYS_IN_WEEK = 7;
 
+const activeOrderFilter = { status: { notIn: FINISHED_ORDER_STATUSES } } as const;
+
 const adminOrderSelect = {
   id: true,
   status: true,
@@ -88,6 +90,59 @@ function toAdminOrder(order: AdminOrderRecord) {
   };
 }
 
+const adminOnlineDriverSelect = {
+  id: true,
+  carModel: true,
+  carNumber: true,
+  rating: true,
+  lat: true,
+  lng: true,
+  lastSeenAt: true,
+  user: {
+    select: {
+      name: true,
+    },
+  },
+  orders: {
+    where: activeOrderFilter,
+    select: { id: true },
+    take: 1,
+  },
+} as const;
+
+type AdminOnlineDriverRecord = Prisma.DriverGetPayload<{ select: typeof adminOnlineDriverSelect }>;
+
+function toAdminOnlineDriver(driver: AdminOnlineDriverRecord) {
+  const { user, orders, ...rest } = driver;
+  return {
+    ...rest,
+    name: user.name,
+    isBusy: orders.length > 0,
+  };
+}
+
+const adminMapOrderSelect = {
+  id: true,
+  fromAddress: true,
+  toAddress: true,
+  createdAt: true,
+  fromLat: true,
+  fromLng: true,
+} as const;
+
+type AdminMapOrderRecord = Prisma.OrderGetPayload<{ select: typeof adminMapOrderSelect }>;
+
+function toAdminMapOrder(order: AdminMapOrderRecord) {
+  return {
+    id: order.id,
+    fromAddress: order.fromAddress,
+    toAddress: order.toAddress,
+    createdAt: order.createdAt,
+    lat: order.fromLat,
+    lng: order.fromLng,
+  };
+}
+
 const adminDriverSelect = {
   id: true,
   carModel: true,
@@ -103,7 +158,7 @@ const adminDriverSelect = {
     },
   },
   orders: {
-    where: { status: { notIn: FINISHED_ORDER_STATUSES } },
+    where: activeOrderFilter,
     select: { id: true },
     take: 1,
   },
@@ -223,17 +278,7 @@ export const AdminService = {
       prisma.driver.findMany({
         where: { isOnline: true },
         orderBy: { rating: "desc" },
-        select: {
-          id: true,
-          carModel: true,
-          carNumber: true,
-          rating: true,
-          lat: true,
-          lng: true,
-          lastSeenAt: true,
-          user: { select: { name: true } },
-          orders: { where: activeOrder, select: { id: true }, take: 1 },
-        },
+        select: adminOnlineDriverSelect,
       }),
       prisma.order.count({ where: { createdAt: { gte: todayStart } } }),
       prisma.order.count({ where: { createdAt: { gte: yesterdayStart, lt: todayStart } } }),
@@ -277,17 +322,63 @@ export const AdminService = {
         revenueYesterday: revenueYesterday._sum.price ?? 0,
       },
       recentOrders: recentOrders.map(toAdminOrder),
-      onlineDrivers: onlineDrivers.map(({ user, orders, ...driver }) => ({
-        ...driver,
-        name: user.name,
-        isBusy: orders.length > 0,
-      })),
+      onlineDrivers: onlineDrivers.map(toAdminOnlineDriver),
       activeOrderPoints: activeOrderPoints.map(({ id, fromLat, fromLng }) => ({
         id,
         lat: fromLat,
         lng: fromLng,
       })),
       weeklyOrders,
+    };
+  },
+
+  async getMapData() {
+    const now = new Date();
+    const [onlineDrivers, waitingOrders] = await Promise.all([
+      prisma.driver.findMany({
+        where: {
+          isOnline: true,
+          lat: { not: null },
+          lng: { not: null },
+        },
+        orderBy: { rating: "desc" },
+        select: adminOnlineDriverSelect,
+      }),
+      prisma.order.findMany({
+        where: { status: "NEW" },
+        orderBy: { createdAt: "desc" },
+        select: adminMapOrderSelect,
+      }),
+    ]);
+
+    const drivers = onlineDrivers.map((driver) => {
+      const base = toAdminOnlineDriver(driver);
+      return {
+        id: base.id,
+        name: base.name,
+        carModel: base.carModel,
+        carNumber: base.carNumber,
+        lat: base.lat as number,
+        lng: base.lng as number,
+        isBusy: base.isBusy,
+        lastSeenAt: base.lastSeenAt,
+      };
+    });
+
+    const orders = waitingOrders.map(toAdminMapOrder);
+
+    const busyDrivers = drivers.filter((d) => d.isBusy).length;
+    const freeDrivers = drivers.length - busyDrivers;
+
+    return {
+      generatedAt: now.toISOString(),
+      drivers,
+      orders,
+      counts: {
+        waitingOrders: orders.length,
+        busyDrivers,
+        freeDrivers,
+      },
     };
   },
 
