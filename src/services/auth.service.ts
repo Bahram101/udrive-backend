@@ -16,6 +16,7 @@ interface VerifyOtpInput {
   code: string;
   name?: string;
   role?: Role;
+  termsAccepted?: boolean;
 }
 
 interface AuthResult {
@@ -29,6 +30,7 @@ interface AuthResult {
     email: string | null;
     avatar: string | null;
     rating: number | null;
+    termsAcceptedAt: Date | null;
     driver?: { id: string };
   };
 }
@@ -41,6 +43,7 @@ export function serializeAuthUser(user: {
   email: string | null;
   avatar: string | null;
   rating: number | null;
+  termsAcceptedAt: Date | null;
   driver?: { id: string } | null;
 }) {
   return {
@@ -51,6 +54,7 @@ export function serializeAuthUser(user: {
     email: user.email,
     avatar: user.avatar,
     rating: user.rating,
+    termsAcceptedAt: user.termsAcceptedAt,
     ...(user.driver && { driver: { id: user.driver.id } }),
   };
 }
@@ -63,6 +67,7 @@ function issueTokens(user: {
   email: string | null;
   avatar: string | null;
   rating: number | null;
+  termsAcceptedAt: Date | null;
   driver: { id: string } | null;
 }): AuthResult {
   const payload: JwtPayload = {
@@ -98,6 +103,7 @@ export const AuthService = {
     code,
     name,
     role,
+    termsAccepted,
   }: VerifyOtpInput): Promise<AuthResult> {
     const now = new Date();
     const otpRecord = await prisma.otpCode.findFirst({
@@ -147,11 +153,13 @@ export const AuthService = {
       return issueTokens(existingUser);
     }
 
-    if (!name || !role) {
-      // Code stays valid: the client resends it together with name and role.
-      throw new AppError(422, "Name and role are required for new users", {
-        isNewUser: true,
-      });
+    if (!name || !role || !termsAccepted) {
+      // Code stays valid: the client resends it together with name, role and terms acceptance.
+      throw new AppError(
+        422,
+        "Name, role and terms acceptance are required for new users",
+        { isNewUser: true },
+      );
     }
 
     await consumeOtp();
@@ -161,6 +169,7 @@ export const AuthService = {
         phone,
         name,
         role,
+        termsAcceptedAt: new Date(),
         ...(role === "DRIVER" && { driver: { create: {} } }),
       },
       include: { driver: true },

@@ -16,6 +16,7 @@ model User {
   email  String?
   rating Float?
   pushToken String?
+  termsAcceptedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

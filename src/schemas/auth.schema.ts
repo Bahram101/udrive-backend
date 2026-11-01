@@ -14,6 +14,7 @@ export const verifyOtpSchema = z.object({
   code: z.string({ error: "code is required" }).min(1, "code is required"),
   name: z.string().min(1).optional(),
   role: z.enum(["CLIENT", "DRIVER"]).optional(),
+  termsAccepted: z.boolean().optional(),
 });
 
 export const refreshSchema = z.object({
