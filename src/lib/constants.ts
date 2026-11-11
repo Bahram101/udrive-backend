@@ -10,3 +10,7 @@ export const FINISHED_ORDER_STATUSES: OrderStatus[] = ["COMPLETED", "CANCELLED"]
 
 // Share of order price the platform takes; 0 = not charged yet.
 export const PLATFORM_COMMISSION_RATE = 0;
+
+// Flat base fare in ₸ before any price-zone surcharges are added.
+export const BASE_PRICE = 400;
+

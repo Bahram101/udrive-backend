@@ -2,7 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { AppError } from "@/lib/errors";
 import { distanceKm } from "@/lib/geo";
 import { FINISHED_ORDER_STATUSES } from "@/lib/constants";
+import { calculateOrderPrice } from "@/lib/pricing";
 import { sendPushNotification } from "@/lib/pushNotifications";
+import { PriceZoneService } from "@/services/priceZone.service";
 import { Order, OrderStatus } from "@/generated/prisma/client";
 
 type OrderWithDriverLocation = Order & {
@@ -15,7 +17,8 @@ interface CreateOrderInput {
   fromLat: number;
   fromLng: number;
   toAddress?: string;
-  price: number;
+  toLat?: number;
+  toLng?: number;
 }
 
 async function findNearestOnlineDrivers(
@@ -147,7 +150,8 @@ export const OrdersService = {
     fromLat,
     fromLng,
     toAddress,
-    price,
+    toLat,
+    toLng,
   }: CreateOrderInput): Promise<Order> {
     const client = await prisma.user.findUnique({ where: { id: clientId } });
 
@@ -158,6 +162,13 @@ export const OrdersService = {
     if (client.role !== "CLIENT" && client.role !== "ADMIN") {
       throw new AppError(403, "Only clients can create orders");
     }
+
+    const zones = await PriceZoneService.listActive();
+    const price = calculateOrderPrice(
+      zones,
+      { lat: fromLat, lng: fromLng },
+      toLat != null && toLng != null ? { lat: toLat, lng: toLng } : undefined,
+    );
 
     // Client row lock: parallel requests can't create two active orders.
     const order = await prisma.$transaction(async (tx) => {
@@ -179,6 +190,8 @@ export const OrdersService = {
           fromLat,
           fromLng,
           toAddress,
+          toLat,
+          toLng,
           price,
           status: "NEW",
         },
